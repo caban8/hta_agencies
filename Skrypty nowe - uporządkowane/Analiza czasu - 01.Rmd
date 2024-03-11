@@ -1,0 +1,425 @@
+---
+title: "Country comparison in terms of the time to recommendation"
+output: 
+  html_document:
+    code_folding: show
+    theme:
+      bg: "#202123"
+      fg: "#B8BCC2"
+      primary: "#EA80FC"
+      secondary: "#00DAC6"
+      base_font:
+        google: Prompt
+      heading_font:
+        google: Proza Libre
+---
+
+```{r setup, include=FALSE}
+if (requireNamespace("thematic")) 
+  thematic::thematic_rmd(font = "auto")
+
+pacman::p_load(rstatix, readxl, tidyverse, broom)
+
+df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
+
+df <- df %>% 
+  select(-c(...1, ...2))
+
+
+
+# Ustalam levels dla countries tak, żeby Poland było kategorią referencyjną
+Kraj_lvls <- c(
+      "Poland",
+      "Australia",
+      "Canada",
+      "England",
+      "France",
+      "Germany",
+      "Ireland",
+      "New Zealand",
+      "Norway",
+      "Scotland",
+      "The Netherlands",
+      "Wales"  
+    )
+
+# Ustalam poziomy factors - Poland first
+df <- df %>% 
+  mutate(Kraj = factor(Kraj, levels = Kraj_lvls))
+
+
+# Lump therapeutic areas with few observations to "other"
+df <- df %>% 
+  mutate(Therapeutic_lumped = fct_lump(Obszar_terapeutyczny, n = 7)) 
+
+df %>% 
+  freq_table(Therapeutic_lumped) %>% 
+  arrange(desc(n))
+
+
+```
+
+
+** JAK WSZYSTKO ZAUTOMATYZOWAĆ ŻEBY SPRAWDZAĆ WSZYSTKIE WARIANTY MODELI ** 
+
+# Uwagi
+
+# Methodology
+
+-   Ważna kwestia. Teoretycznie mamy tutaj do czynienia z jakąś formą within-design. W końcu agencja to pojedynczy byt, dla którego mamy więcej niż jeden powtórzony pomiar.
+
+**Which variables can be inclued as fixed-effects?**
+
+Is there a theoretical justification to include criteria of benefits, like clinical benefit or cost-effectiveness, in the model?
+
+There is definitely a theoretical basis for including therapeutic area, as the processing of drugs from different areas might be guided by different goals which could be reflected in differences of their prioritization by specific medical and govermnetal insitutions.
+
+Whether the recommendation was positive or negative might also play a role. It should be easier to find reasons to dismiss a drug than to accept it, as rejection often is a result of not meeting one of many criteria, while acceptance is more often associated with meeting all of them. 
+
+
+# Infrastruktura
+
+## Params - Parameters
+
+Parameters included in order to vary the models:
+
+-   Country as a fixed vs random effects?
+    -   Something to consider in theoretical terms
+-   Number of additional fixed effects
+    -   Therapeutic area
+-   Transformation of the dependent variable (to correct deviations from the assumptions, if necessary)
+    -   Logarithmic
+    -   Other?
+
+    
+
+
+```{r}
+
+df 
+
+
+```
+
+
+
+## Tables
+
+```{r}
+
+html_table <- function(x) {
+  x %>% 
+    knitr::kable()
+}
+
+```
+
+
+
+# Data cleaning
+
+
+
+```{r}
+
+df %>% 
+  count(ID, Agencja_kraj) %>% 
+  filter(n != 1)
+
+
+
+```
+
+
+Dla agencji, które miały więcej niż jedną rekomendację w danym wskazaniu, wybieram tę krótszą / wcześniejszą
+
+
+```{r}
+
+df <- df %>% 
+  group_by(ID, Agencja_kraj) %>% 
+  arrange(dni_do_rekomendacji) %>% 
+  slice(1) %>% 
+  ungroup()
+
+```
+
+
+
+
+# EDA
+
+
+## Country comparison by median
+
+```{r}
+
+df_selected <- df %>% 
+  select(ID, Kraj, dni_do_rekomendacji) 
+
+recommendation_order <- df_selected %>% 
+  group_by(ID) %>% 
+  arrange(ID, dni_do_rekomendacji) %>% 
+  mutate(recommendation_order = row_number()) %>% 
+  ungroup()
+
+
+```
+
+Analiza ogólna, bez uwzględnienia liczby rekomendacji w ramach danego wskazania.
+
+```{r}
+
+recommendation_order %>% 
+  group_by(Kraj) %>% 
+  summarise(
+    order_median = median(recommendation_order)
+  ) %>% 
+  arrange(order_median) %>% 
+  html_table()
+
+
+
+```
+ 
+ 
+ 
+```{r}
+
+# Extract number of recommendations per ID 
+wskazanie_count <- df_selected %>% 
+  count(ID)
+
+# Obtain recommendation order based on country and available number of recommendations 
+recommendation_order2 <- df_selected %>% 
+  left_join(wskazanie_count) %>% 
+  group_by(ID) %>% 
+  arrange(ID, dni_do_rekomendacji) %>% 
+  mutate(recommendation_order = row_number()) %>% 
+  ungroup() %>% 
+  group_by(Kraj, n) %>% 
+  summarise(
+    order_median = median(recommendation_order)
+  ) %>% 
+  arrange(n, order_median) %>% 
+  filter(n >= 6) 
+
+
+recommendation_order2 %>% 
+  html_table()
+
+
+
+```
+ 
+ 
+## Mean time by country and recommendation 
+
+
+```{r}
+df %>% 
+  ggplot(aes(Kraj, dni_do_rekomendacji, fill = Rekomendacja)) +
+  geom_boxplot() +
+  coord_flip()
+```
+
+
+```{r}
+df %>% 
+  group_by(Kraj, Rekomendacja) %>% 
+  summarise(
+    mean = mean(dni_do_rekomendacji)
+  ) %>% 
+  drop_na() %>% 
+  ggplot(aes(Kraj, mean, fill = Rekomendacja)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip()
+
+```
+
+
+ 
+## Porównania parami
+
+
+
+
+
+
+Pamiętać o tym, że niektóre kraje mają więcej niż jedną rekomendację na wskazanie.
+Wybrać zawsze te szybsze rekomendacje. 
+
+```{r}
+
+# Extract all paired combinations of countries
+country_pairs <- df$Kraj %>% 
+  unique() %>% 
+  combn(m = 2, simplify = F)
+
+
+
+
+
+# Extract all paired data.frames with complete observations for both
+
+df %>% 
+  filter(Kraj %in% country_pairs[[1]]) 
+  
+
+
+paired_df <- list()
+
+for (i in length(country_pairs)) {
+  
+}
+
+country_pairs
+
+```
+
+
+## Mixed effects model
+
+
+Sprawdźmy, jak rozkładają się dni do rekomendacji w zależności od kraju, uwzględniając wskazanie jako random event
+
+
+
+
+```{r}
+
+# Losuję 10 id do pogrubienia na wykresie
+# set.seed(123)
+bold_id <- df$ID %>% 
+  unique() %>% 
+  sample(size = 5)
+
+
+df %>% 
+  # mutate(bold = if_else(ID %in% bold_id, "Yes", "No")) %>% 
+  filter(ID %in% bold_id) %>% 
+  ggplot(aes(Kraj, dni_do_rekomendacji, color = factor(ID))) +
+  geom_point()
+
+
+```
+
+### Model z Kraj jako fixed-effects
+
+
+```{r}
+library(lme4)
+
+
+mod_lm <- lm(dni_do_rekomendacji ~ Kraj, data = df)
+summary(mod_lm)
+```
+
+
+```{r}
+mod <- lmer(dni_do_rekomendacji ~ Kraj + (1|ID), data = df)
+mod <- lmer(dni_do_rekomendacji ~ Kraj + Rekomendacja + (1|ID), data = df)
+mod <- lmer(dni_do_rekomendacji ~ Kraj + Rekomendacja + Therapeutic_lumped + (1|ID), data = df)
+
+summary(mod)
+```
+
+
+#### Analiza fixed effects
+
+```{r}
+
+
+```
+
+
+```{r}
+library(emmeans)
+emm <- emmeans(mod, pairwise ~ Kraj)
+
+
+# Sprowadzam do macierzy ala interkorelacje
+posthoc1 <- emm$contrasts %>% 
+  as_tibble() %>% 
+  separate(contrast, into = c("Country1", "Country2"), sep = " - ") 
+
+posthoc2 <- posthoc1 %>% 
+  rename(
+    Country1 = Country2,
+    Country2 = Country1
+    )
+
+
+posthoc1 %>% 
+  add_row(posthoc2) %>% 
+  mutate(
+    across(c(Country1, Country2), ~factor(., levels = Kraj_lvls))
+        ) %>% 
+  mutate(sig = case_when(
+    p.value > 0.05 ~ "",
+    p.value <= 0.05 & p.value > 0.01 ~ "*",
+    p.value <= 0.01 & p.value > 0.001 ~ "**",
+    p.value <= 0.001 ~ "***"
+  )) %>% 
+  mutate(
+    across(where(is.double), ~round(., 2))
+  ) %>% 
+  mutate(
+    est = str_c(estimate, " (", SE, ")", sig)
+  ) %>% 
+  select(Country1, Country2, est) %>% 
+  pivot_wider(names_from = Country2, values_from = est, names_sort = T)
+```
+
+
+Wykres dla estimated marginal means
+
+
+```{r}
+
+emm$emmeans %>% 
+  as_tibble() %>% 
+  ggplot(aes(fct_reorder(Kraj, emmean), emmean, group = 1))  +
+  geom_line() +
+  geom_point()
+
+```
+
+
+
+#### Analiza random effects
+
+```{r}
+# ranef(mod)
+
+
+```
+
+
+#### Checking assumptions
+
+
+```{r}
+
+ggplot(mapping = aes(residuals(mod))) +
+  geom_histogram()
+
+
+ggplot(mapping = aes(predict(mod), residuals(mod))) +
+  geom_point() +
+  geom_smooth(se = F)
+  
+
+
+
+```
+
+
+
+
+ 
+# Sprawdźmy pod kątem statystyk opisowych
+
+
+
+
