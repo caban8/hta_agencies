@@ -120,11 +120,10 @@ Parameters included in order to vary the models:
 
 -   Country as a fixed vs random effects?
     -   Something to consider in theoretical terms
--   Number of additional fixed effects
-    -   Therapeutic area
 -   Transformation of the dependent variable (to correct deviations from the assumptions, if necessary)
     -   Logarithmic
     -   Other?
+-   Minimum value of observations per indication 
     
 
 Should I compare the AIC (or other similar measure) between lm and lmer models? To justify using the latter?
