@@ -15,6 +15,7 @@ output:
 params:
   transformation: "none"
   country_fixed: true
+  model_function: "standard"
 ---
 
 # Setup
@@ -160,6 +161,9 @@ control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>%
 # Set random effects
 random_effects <- c("(1|ID)", "(1|Kraj)")
 
+
+
+
 # Set all combinations of model formulas
 model_formulas <- expand_grid(dv, control_pred2, random_effects) %>% 
   mutate(
@@ -178,9 +182,14 @@ model_formulas <- expand_grid(dv, control_pred2, random_effects) %>%
   select(transformation, Country_fixed, formula, mod_formula)
 
 
+
+
 # Choose model types based on the selected parameters
 model_formulas2 <- model_formulas %>% 
-  filter(transformation == params$transformation, Country_fixed == params$country_fixed)
+  filter(
+    transformation == params$transformation, 
+    Country_fixed == params$country_fixed
+    )
 
 ```
 
