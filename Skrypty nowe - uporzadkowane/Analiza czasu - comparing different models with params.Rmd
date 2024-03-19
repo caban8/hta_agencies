@@ -145,7 +145,9 @@ dv <- c("dni_do_rekomendacji", "log_days")
 control_pred <- c(
   "Therapeutic_lumped", 
   "Rekomendacja",
-  "Drug_category"
+  "Drug_category",
+  # "Year",
+  "Therapeutic_lumped:Rekomendacja"
   )
 
 control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>% 
