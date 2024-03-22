@@ -723,7 +723,7 @@ weights_vars <- str_c("~ 1 | ", c("Kraj", "Therapeutic_lumped", "Rekomendacja"))
 fixed_formulas <- str_c(c("log_days", "dni_do_rekomendacji"), " ~ Kraj + Therapeutic_lumped + Rekomendacja") 
 
 # Create a tibble with all combinations of dataframes, methods, weights and DV transformations
-weighted_mods <- expand.grid(
+weighted_mods <- expand_grid(
   DV = c("log_days", "dni_do_rekomendacji"),
   data = dataframes,
   method = c("ML", "REML"),
@@ -766,11 +766,17 @@ weighted_mods2 <- weighted_mods %>%
     mod = pmap(
       list(fixed, data, method, weights),
       possibly(lme_iterate, quiet = TRUE, otherwise = NA)
-      
     )
-  ) %>% 
-  select(-c(fixed, weights))
+  ) 
+
+# Remove unfitted models
+weighted_mods2 <- weighted_mods2 %>% 
+  filter(!map_lgl(mod, ~is.logical(.))) %>% 
+  as_tibble()
+  
 ```
+
+
 
 
 ```{r}
@@ -816,34 +822,58 @@ weighted_mods2$homo
 ```
 
 
+Update the best models by removing outliers
+
 
 
 ```{r}
 
-residuals(weighted_mods2$mod[[1]]) %>% 
-  scale() %>% 
-  length()
+weighted_best <- weighted_mods2 %>% 
+  arrange(desc(r2_marg)) %>% 
+  slice(1:6) %>% 
+  mutate(
+    data_filtered = map2(data, mod, filter_residuals),
+    mod_filtered = pmap(
+      list(fixed, data_filtered, method, weights),
+      possibly(lme_iterate, quiet = TRUE, otherwise = NA)
+    )
+  )
+
+```
 
 
 
-lme(
-  fixed = log_days ~ Kraj + Therapeutic_lumped + Rekomendacja, 
-  random = ~ 1 | ID,
-  weights =  varIdent(form = ~1 | Kraj),
-  data = filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]), method = "ML"
-  
-) %>% 
-  plot()
-
-filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]) 
 
 
+```{r}
+
+weighted_best <- weighted_best %>% 
+  mutate(
+    homo_filtered = map(mod_filtered, homoscedasticity_plot),
+    homo_filtered = map2(homo_filtered, mod_details, add_title)
+  )
+
+cowplot::plot_grid(plotlist =  weighted_best$homo_filtered)
 
 
 ```
 
 
-Jeśli nie uda się z weigthed version, to pozostaje obliczenie robust errors
+
+
+```{r}
+
+
+weighted_best %>% 
+  filter(DV == "log_days") %>% 
+  select(homo, homo_filtered) %>% 
+  pivot_longer(everything()) %>% 
+  pull(value) %>% 
+  {cowplot::plot_grid(plotlist = .)}
+
+
+```
+
 
 
 ### Analiza fixed effects
