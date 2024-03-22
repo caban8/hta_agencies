@@ -329,8 +329,17 @@ df %>%
 
 
 ```
+For the untransformed number of days, majority of the observations fell between 0 to 1000 days. 
+However, there was a substantiall number of outliers
 
 
+```{r}
+df %>% 
+  ggplot(aes(Kraj, dni_do_rekomendacji)) +
+  geom_boxplot() +
+  coord_flip()
+```
+Most of the countries had a pretty wide distribution of days to recommendation, with the higher margin falling between 750 and 1250 days. Two expections were Germany - with a relatively very small distrubtion for most of its recommendations - and Poland - with a relatively larger spread. 
 
 
 ## Country comparison by median
@@ -488,9 +497,9 @@ model_mixed <- function(data) {
 # Function for calculating marginal and conditional r-squared
 r2_marginal <- function(mod) {
   
-  r <- performance::r2(mod) 
+  r <- MuMIn::r.squaredGLMM(mod)
   
-  return(r$R2_marginal)
+  return(r[[1]])
 
 }
 
@@ -498,7 +507,7 @@ r2_conditional <- function(mod) {
   
   r <- performance::r2(mod) 
   
-  return(r$R2_conditional)
+  return(r[[2]])
 
 }
 
@@ -870,6 +879,69 @@ weighted_best %>%
   pivot_longer(everything()) %>% 
   pull(value) %>% 
   {cowplot::plot_grid(plotlist = .)}
+
+
+```
+Compare the best of the models fitted to the filtered dataset
+
+```{r}
+
+
+weighted_best %>% 
+  mutate(
+    aic_filtered = map_dbl(mod_filtered, AIC),
+    r2_marg_filtered = map_dbl(mod_filtered, r2_marginal)
+  ) %>% 
+  select(mod_details, matches("aic|r2"))
+
+
+```
+
+As we can see adding weights to the mixed model improves the fit substantially, which can be see by an improvement in both AIC and marginal R-squared measures. 
+
+
+#### Test pojedynczy
+
+```{r}
+residuals(weighted_mods2$mod[[1]]) %>% 
+  scale() %>% 
+  length()
+
+
+
+mod_poj <- lme(
+  fixed = log_days ~ Kraj + Therapeutic_lumped + Rekomendacja, 
+  random = ~ 1 | ID,
+  weights =  varIdent(form = ~1 | Kraj),
+  data = filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]), method = "ML"
+  
+) 
+
+
+plot(mod_poj)
+plot(preliminary_mods$model_reduced[[1]])
+
+par(mfrow = c(1,2))
+plot(predict(mod_poj), residuals(mod_poj))
+plot(predict(preliminary_mods$model_reduced[[1]]), residuals(preliminary_mods$model_reduced[[1]]))
+```
+
+
+```{r}
+lme(
+  fixed = log_days ~ Kraj + Therapeutic_lumped + Rekomendacja, 
+  random = ~ 1 | ID,
+  weights =  varIdent(form = ~1 | Kraj),
+  data = filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]), method = "ML"
+  
+) %>% 
+  homoscedasticity_plot() +
+  geom_hline(yintercept = 0, color = "red")
+
+filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]) 
+
+
+
 
 
 ```

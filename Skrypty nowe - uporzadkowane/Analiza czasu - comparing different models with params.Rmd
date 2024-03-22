@@ -15,7 +15,7 @@ output:
 params:
   transformation: "none"
   country_fixed: true
-  model_function: "standard"
+  maximum_days: 3000
 ---
 
 # Setup
@@ -148,7 +148,7 @@ control_pred <- c(
   "Rekomendacja",
   "Drug_category",
   # "Year",
-  "Therapeutic_lumped:Rekomendacja"
+  # "Therapeutic_lumped:Rekomendacja"
   )
 
 control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>% 
@@ -221,6 +221,17 @@ df <- df %>%
   arrange(dni_do_rekomendacji) %>% 
   slice(1) %>% 
   ungroup()
+
+
+```
+
+
+## Filtering options
+
+```{r}
+
+df <- df %>%
+  filter(dni_do_rekomendacji < params$maximum_days)
 
 
 ```
