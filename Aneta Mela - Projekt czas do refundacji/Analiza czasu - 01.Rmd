@@ -736,9 +736,7 @@ However, both continue to have a substantial heteroscedasticity.
 
 
 
-#### Applying weights
-
-
+#### Applying varIdent weigths
 
 
 ```{r}
@@ -756,9 +754,7 @@ weighted_mods <- expand_grid(
   data = dataframes,
   method = c("ML", "REML"),
   weight_var = c(
-    "Kraj", "Therapeutic_lumped", "Rekomendacja",
-    "Kraj_Therapeutic_lumped",
-    "Kraj_Rekomendacja"
+    "Kraj", "Therapeutic_lumped", "Rekomendacja"
     )
 ) %>% 
   mutate(
@@ -785,7 +781,7 @@ lme_iterate <- function(fixed, data, method, weights) {
         lme(
           fixed = fixed,
           method = method,
-          weights = varPower(value = -0.5, form =  ~fitted(.)),
+          weights = varIdent(form =  weights),
           data = data, 
           random = ~ 1 | ID
         
@@ -807,12 +803,7 @@ weighted_mods2 <- weighted_mods2 %>%
   filter(!map_lgl(mod, ~is.logical(.))) %>% 
   as_tibble()
   
-```
 
-
-
-
-```{r}
 # Obtain model performance AIC statistic
 weighted_mods2 <- weighted_mods2 %>% 
   mutate(
@@ -820,12 +811,12 @@ weighted_mods2 <- weighted_mods2 %>%
     r2_marg = map_dbl(mod, possibly(r2_marginal, otherwise = Inf)),
     r2_cond = map_dbl(mod, possibly(r2_conditional, otherwise = Inf))
     ) %>% 
-  arrange(aic)
+  arrange(desc(r2_marg))
 ```
 
 
-
 ```{r}
+# Produce the table
 weighted_mods2 %>% 
   select(mod_details, aic, r2_marg, r2_cond) %>% 
   html_table()
@@ -855,7 +846,7 @@ weighted_mods2$homo
 ```
 
 
-Update the best models by removing outliers
+None of the weighted models was corrected for heteroscedasticity.
 
 
 
@@ -872,13 +863,7 @@ weighted_best <- weighted_mods2 %>%
     )
   )
 
-```
 
-
-
-
-
-```{r}
 
 weighted_best <- weighted_best %>% 
   mutate(
@@ -893,6 +878,9 @@ cowplot::plot_grid(plotlist =  weighted_best$homo_filtered)
 
 ```
 
+Even after removing the outliers all models continue to display substantial heteroscedasticity.
+
+
 
 ```{r}
 cowplot::plot_grid(plotlist =  weighted_best$norm_filtered)
@@ -900,49 +888,100 @@ cowplot::plot_grid(plotlist =  weighted_best$norm_filtered)
 
 
 
-```{r}
-weighted_best %>% 
-  filter(DV == "log_days") %>% 
-  select(homo, homo_filtered) %>% 
-  pivot_longer(everything()) %>% 
-  pull(value) %>% 
-  {cowplot::plot_grid(plotlist = .)}
-```
-
+#### Applying power and exponential var weights
 
 
 
 ```{r}
+# Extract an lme function for iteration
+lme_iterate2 <- function(data, method, type, value) {
+        
+  # Choose weighting function
+  if (type == "power") {
+    var_obtain <- match.fun("varPower")
+  } else {var_obtain <- match.fun("varExp")}
+  
+  # Fit the model
+  lme(
+    fixed = log_days ~ Kraj + Therapeutic_lumped + Rekomendacja,
+    method = method,
+    weights = var_obtain(value = value, form =  ~fitted(.)),
+    data = data, 
+    random = ~ 1 | ID
+    )
+  
+  }
 
-
-weighted_best %>% 
-  filter(DV == "log_days") %>% 
-  select(homo, homo_filtered) %>% 
-  pivot_longer(everything()) %>% 
-  pull(value) %>% 
-  {cowplot::plot_grid(plotlist = .)}
-
-
-```
-Compare the best of the models fitted to the filtered dataset
-
-```{r}
-
-
-weighted_best <- weighted_best %>% 
+# Create a tibble with all combinations of dataframes, methods, weights and DV transformations
+weighted_fitted <- expand_grid(
+  data = dataframes,
+  method = c("ML", "REML"),
+  type = c("power", "exp"),
+  value = seq(-1, 0, 0.2)
+) %>% 
   mutate(
-    aic_filtered = map_dbl(mod_filtered, AIC),
-    r2_marg_filtered = map_dbl(mod_filtered, r2_marginal)
+    across(where(is.factor), ~as.character(.)),
+    observations = map_dbl(data, nrow),
+    min_obs = if_else(observations == 1933, 1, 2),
+    mod_details = str_c(
+      "weights = ", type, " to ", value,
+      "; min obs per indication = ", min_obs,
+      "; method = ", method
+      ), # Vector for plot titles
+    )
+
+
+
+
+# Fit all model combinations
+weighted_fitted <- weighted_fitted %>% 
+  mutate(
+    mod = pmap(
+      list(data, method, type, value),
+      possibly(lme_iterate2, quiet = TRUE, otherwise = NA)
+    )
+  )
+```
+
+
+```{r}
+# Remove unfitted models
+ weighted_fitted2 <-  weighted_fitted %>% 
+  filter(!map_lgl(mod, ~is.logical(.))) %>% 
+  as_tibble()
+  
+
+# Obtain model performance AIC statistic
+weighted_fitted2 <-  weighted_fitted2 %>% 
+  mutate(
+    aic = map_dbl(mod, possibly(AIC, otherwise = Inf)),
+    r2_marg = map_dbl(mod, possibly(r2_marginal, otherwise = Inf)) %>% round(3),
+    r2_cond = map_dbl(mod, possibly(r2_conditional, otherwise = Inf))
+    ) %>% 
+  arrange(aic)
+
+
+```
+
+
+
+```{r}
+# Compare models in terms of the heteroscedasticity degree
+weighted_fitted2 <- weighted_fitted2 %>% 
+  filter(aic != Inf) %>% 
+  mutate(
+    homo = map(mod, homoscedasticity_plot)
   ) 
 
 
-weighted_best %>% 
-  select(mod_details, matches("aic|r2"))
+weighted_fitted2$homo
+
 
 
 ```
 
-As we can see adding weights to the mixed model improves the fit substantially, which can be see by an improvement in both AIC and marginal R-squared measures. 
+
+
 
 
 ```{r}
@@ -1014,6 +1053,13 @@ filter_residuals(df_IDreduced, weighted_mods2$mod[[1]])
 
 ```
 
+
+#### Other solutions
+
+-   bootstrap for the estimated marginal means
+    -   https://stackoverflow.com/questions/75852979/bootstrapping-emmeans-derived-from-a-multilevel-regression-but-error-in-t-star
+    -   https://stackoverflow.com/questions/39358438/r-obtain-coefficientsci-from-bootstrapping-mixed-effect-model-results
+-   robust errors
 
 
 # Final model analysis
