@@ -101,6 +101,15 @@ Whether the recommendation was positive or negative might also play a role. It s
 # Infrastruktura
 
 
+## Functions
+
+```{r}
+
+# Import functions for performance measures
+source("Funkcje/performance functions.R")
+
+```
+
 
 ## Tables
 
@@ -144,10 +153,15 @@ dv <- c("dni_do_rekomendacji", "log_days")
 
 # Set additional controlling fixed effects
 control_pred <- c(
-  "Therapeutic_lumped", 
+  #"Therapeutic_lumped",
   "Rekomendacja",
   "Drug_category",
-  # "Year",
+  "Obszar_terapeutyczny", 
+  "Kat1_Korzyść_kliniczna",
+  "Kat1_Efektywność_kosztowa"
+  # "Kat2_Wpływ_budżet",
+  # "Kat1_Bezpieczeństwo"
+    # "Year",
   # "Therapeutic_lumped:Rekomendacja"
   )
 
@@ -251,7 +265,9 @@ models_df <- model_formulas2 %>%
     model = map(mod_formula, lmer, data = df),
     residuals = map(model, residuals),
     predicted = map(model, predict),
-    AIC = map_dbl(model, function(x) {AIC(logLik(x))})
+    AIC = map_dbl(model, function(x) {AIC(logLik(x))}),
+    r2_marg = map_dbl(model, r2_marginal),
+    r2_cond = map_dbl(model, r2_conditional)
   )
 
 models_df_unnested <-  models_df %>% 
@@ -285,7 +301,7 @@ models_df_unnested %>%
 ```{r}
 models_df %>% 
   arrange(AIC) %>% 
-  select(formula, AIC) %>% 
+  select(formula, AIC, r2_marg, r2_cond) %>% 
   html_table()
   
 ```

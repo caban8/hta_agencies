@@ -405,7 +405,7 @@ recommendation_order2 %>%
 ```
  
  
-## Mean time by country and recommendation 
+## Mean and variance of number of days by country, recommendation and therapeutic area
 
 
 ```{r}
@@ -430,7 +430,30 @@ df %>%
 ```
 
 
-# Modelling
+
+
+```{r}
+
+df %>% 
+  ggplot(aes(Therapeutic_lumped, dni_do_rekomendacji)) +
+  geom_boxplot()
+
+```
+
+
+```{r}
+
+df %>% 
+  ggplot(aes(Therapeutic_lumped, dni_do_rekomendacji, fill = Rekomendacja)) +
+  geom_boxplot()
+
+
+```
+
+
+
+
+# Model selection
 
 
 ## Null model vs Only random effects model
@@ -494,22 +517,8 @@ model_mixed <- function(data) {
   return(fit)
 }
 
-# Function for calculating marginal and conditional r-squared
-r2_marginal <- function(mod) {
-  
-  r <- MuMIn::r.squaredGLMM(mod)
-  
-  return(r[[1]])
-
-}
-
-r2_conditional <- function(mod) {
-  
-  r <- performance::r2(mod) 
-  
-  return(r[[2]])
-
-}
+# Import functions for performance measures
+source("Funkcje/performance functions.R")
 
 
 ```
@@ -649,7 +658,8 @@ preliminary_mods <- preliminary_mods %>%
   mutate(
     data_reduced = map2(data, model, filter_residuals),
     model_reduced = map(data_reduced, model_mixed),
-    aic_reduced = map_dbl(model_reduced, AIC)
+    aic_reduced = map_dbl(model_reduced, AIC),
+    r2_marg_reduced = map_dbl(model_reduced, r2_marginal)
   ) 
   
 
@@ -690,6 +700,13 @@ preliminary_plots <- preliminary_mods %>%
 
 Check normality
 
+
+```{r}
+cowplot::plot_grid(plotlist = preliminary_plots$norm)
+
+```
+
+
 ```{r}
 
 cowplot::plot_grid(plotlist = preliminary_plots$homo)
@@ -701,15 +718,16 @@ Filtering the models by outliers above the absolute value of 3 of the standardiz
 
 
 ```{r}
-cowplot::plot_grid(plotlist = preliminary_plots$homo, nrow = 2)
+cowplot::plot_grid(plotlist = preliminary_plots$norm, nrow = 2)
 ```
 
 
 Both reduced models display a normal distribution of the residuals.
 
+
 ```{r}
 
-
+cowplot::plot_grid(plotlist = preliminary_plots$homo, nrow = 2)
 
 ```
 
@@ -717,7 +735,8 @@ However, both continue to have a substantial heteroscedasticity.
 
 
 
-Let's try implementing weights
+
+#### Applying weights
 
 
 
@@ -736,11 +755,16 @@ weighted_mods <- expand_grid(
   DV = c("log_days", "dni_do_rekomendacji"),
   data = dataframes,
   method = c("ML", "REML"),
-  weight_var = c("Kraj", "Therapeutic_lumped", "Rekomendacja")
+  weight_var = c(
+    "Kraj", "Therapeutic_lumped", "Rekomendacja",
+    "Kraj_Therapeutic_lumped",
+    "Kraj_Rekomendacja"
+    )
 ) %>% 
   mutate(
     across(where(is.factor), ~as.character(.)),
-    min_obs = rep(c(1, 2), nrow(.) / 2),
+    observations = map_dbl(data, nrow),
+    min_obs = if_else(observations == 1933, 1, 2),
     mod_details = str_c(
       "DV = ", DV, 
       "; weights = ", weight_var, 
@@ -761,7 +785,7 @@ lme_iterate <- function(fixed, data, method, weights) {
         lme(
           fixed = fixed,
           method = method,
-          weights = varIdent(form =  weights),
+          weights = varPower(value = -0.5, form =  ~fitted(.)),
           data = data, 
           random = ~ 1 | ID
         
@@ -859,12 +883,30 @@ weighted_best <- weighted_mods2 %>%
 weighted_best <- weighted_best %>% 
   mutate(
     homo_filtered = map(mod_filtered, homoscedasticity_plot),
-    homo_filtered = map2(homo_filtered, mod_details, add_title)
+    homo_filtered = map2(homo_filtered, mod_details, add_title),
+    norm_filtered = map(mod_filtered, hist_resid),
+    norm_filtered = map2(norm_filtered, mod_details, add_title),
   )
 
 cowplot::plot_grid(plotlist =  weighted_best$homo_filtered)
 
 
+```
+
+
+```{r}
+cowplot::plot_grid(plotlist =  weighted_best$norm_filtered)
+```
+
+
+
+```{r}
+weighted_best %>% 
+  filter(DV == "log_days") %>% 
+  select(homo, homo_filtered) %>% 
+  pivot_longer(everything()) %>% 
+  pull(value) %>% 
+  {cowplot::plot_grid(plotlist = .)}
 ```
 
 
@@ -887,17 +929,43 @@ Compare the best of the models fitted to the filtered dataset
 ```{r}
 
 
-weighted_best %>% 
+weighted_best <- weighted_best %>% 
   mutate(
     aic_filtered = map_dbl(mod_filtered, AIC),
     r2_marg_filtered = map_dbl(mod_filtered, r2_marginal)
-  ) %>% 
+  ) 
+
+
+weighted_best %>% 
   select(mod_details, matches("aic|r2"))
 
 
 ```
 
 As we can see adding weights to the mixed model improves the fit substantially, which can be see by an improvement in both AIC and marginal R-squared measures. 
+
+
+```{r}
+
+best_model <- weighted_best %>% 
+  arrange(desc(r2_marg)) %>% 
+  slice(1) 
+
+
+best_model$mod_filtered
+
+mixed_best <- lme(
+  fixed = log(dni_do_rekomendacji) ~ Kraj + Therapeutic_lumped + Rekomendacja, 
+  random = ~ 1 | ID,
+  weights =  varIdent(form = ~1 | Kraj),
+  data = best_model$data_filtered[[1]],
+    method = "ML"
+  
+) 
+
+
+```
+
 
 
 #### Test pojedynczy
@@ -948,30 +1016,49 @@ filter_residuals(df_IDreduced, weighted_mods2$mod[[1]])
 
 
 
-### Analiza fixed effects
+# Final model analysis
+
+
 
 ```{r}
-confint(mixed_fit)
+# confint(mixed_best)
+intervals(mixed_best)
 
 ```
+
+Delta method for obtaining se back to normal after log transformation
+https://stats.oarc.ucla.edu/r/faq/how-can-i-estimate-the-standard-error-of-transformed-regression-parameters-in-r-using-the-delta-method/
+
+
+## Country comparison post-hoc analysis
 
 
 ```{r}
 
 library(emmeans)
-emm <- emmeans(mixed_fit, pairwise ~ Kraj)
+
+# Obliczam różnice dla wszystkich par krajów
+emm <- emmeans(mixed_best, pairwise ~ Kraj, type = "response")
+
+
+
+
+
+# Wyodrębniam tabelę ze średnimi dla krajów
+country_means <- emm$emmeans %>% 
+  as_tibble()
 
 
 # Sprowadzam do macierzy ala interkorelacje
 posthoc1 <- emm$contrasts %>% 
   as_tibble() %>% 
-  separate(contrast, into = c("Country1", "Country2"), sep = " - ") 
+  separate(contrast, into = c("Country1", "Country2"), sep = " / ") 
 
 posthoc2 <- posthoc1 %>% 
   rename(
     Country1 = Country2,
     Country2 = Country1
-    )
+    ) 
 
 
 posthoc1 %>% 
@@ -989,7 +1076,7 @@ posthoc1 %>%
     across(where(is.double), ~round(., 2))
   ) %>% 
   mutate(
-    est = str_c(estimate, " (", SE, ")", sig)
+    est = str_c(ratio, " (", SE, ")", sig)
   ) %>% 
   select(Country1, Country2, est) %>% 
   pivot_wider(names_from = Country2, values_from = est, names_sort = T)
@@ -1001,22 +1088,22 @@ Wykres dla estimated marginal means
 
 ```{r}
 
-emm$emmeans %>% 
+country_means %>% 
   as_tibble() %>% 
-  ggplot(aes(fct_reorder(Kraj, emmean), emmean, group = 1))  +
+  ggplot(aes(fct_reorder(Kraj, response), response, group = 1))  +
   geom_line() +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL)) +
   geom_point()
 
 ```
 
 
 
-### Random Effects analysis
 
-```{r}
-# ranef(mod) %>% 
-  
+# Description and Interpretation
 
+-   Extreme values were removed to allow for a normal distribution of the errors
+-   Weights were applied based on country
+-   logarithmic transformation
 
-```
 
