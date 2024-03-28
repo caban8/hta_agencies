@@ -16,6 +16,7 @@ params:
   transformation: "none"
   country_fixed: true
   maximum_days: 3000
+  min_recommendations: 1
 ---
 
 # Setup
@@ -66,6 +67,7 @@ df <- df %>%
     log_days = if_else(dni_do_rekomendacji == 0, 1, dni_do_rekomendacji) %>% log(),
     Drug_category = if_else(Kategoria_lek == "Orphan", "Orphan", "Other")
     ) 
+
 
 
 
@@ -153,16 +155,19 @@ dv <- c("dni_do_rekomendacji", "log_days")
 
 # Set additional controlling fixed effects
 control_pred <- c(
-  #"Therapeutic_lumped",
   "Rekomendacja",
   "Drug_category",
-  "Obszar_terapeutyczny", 
-  "Kat1_Korzyść_kliniczna",
-  "Kat1_Efektywność_kosztowa"
+  "Therapeutic_lumped",
+  "Therapeutic_lumped:Kraj"
+  # "Therapeutic_lumped:Rekomendacja",
+  # "Kraj:Rekomendacja"
+  # "Obszar_terapeutyczny", 
+  # "Obszar_terapeutyczny:Kraj"
+  # "Kat1_Korzyść_kliniczna",
+  # "Kat1_Efektywność_kosztowa"
   # "Kat2_Wpływ_budżet",
   # "Kat1_Bezpieczeństwo"
-    # "Year",
-  # "Therapeutic_lumped:Rekomendacja"
+  # "Year",
   )
 
 control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>% 
@@ -173,7 +178,8 @@ control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>%
 
 
 # Set random effects
-random_effects <- c("(1|ID)", "(1|Kraj)")
+random_effects <- c("(1|ID)", "(1|Kraj)", "(1 + ID|Year)", "(1|Year)")
+random_effects <- c("(1|ID)", "(1|Kraj)", "(1 + ID|Year)", "(1|Year)")
 
 
 
@@ -216,25 +222,43 @@ model_formulas2 <- model_formulas %>%
 
 ```{r}
 
-df %>% 
+
+repeated_recommendations <- df %>% 
   count(ID, Agencja_kraj) %>% 
-  filter(n != 1)
+  filter(n != 1) %>% 
+  nrow()
 
 
 
 ```
 
+There were `r repeated_recommendations` instances of recommendations that were processed more than once for a given indication by a given country. 
 
-Dla agencji, które miały więcej niż jedną rekomendację w danym wskazaniu, wybieram tę krótszą / wcześniejszą
+From each such group of repeated recommendations only the one associaited with the smallest number of days is selected.
+
+
 
 
 ```{r}
 
+# Select only one recommendation per country per indication
 df <- df %>% 
   group_by(ID, Agencja_kraj) %>% 
   arrange(dni_do_rekomendacji) %>% 
   slice(1) %>% 
   ungroup()
+
+
+# Remove missing data
+df <- df %>% 
+  drop_na(dni_do_rekomendacji, Therapeutic_lumped, Rekomendacja, ID)
+
+
+# Add information about number of recommendations per indicaiton
+df <- df %>% 
+  group_by(ID) %>% 
+  mutate(ID_recommendations = n()) %>% 
+  ungroup() 
 
 
 ```
@@ -244,8 +268,12 @@ df <- df %>%
 
 ```{r}
 
+# 
 df <- df %>%
-  filter(dni_do_rekomendacji < params$maximum_days)
+  filter(
+    dni_do_rekomendacji < params$maximum_days, # Observations below a given number of days
+    ID_recommendations >= params$min_recommendations
+    )
 
 
 ```
@@ -282,7 +310,8 @@ models_df_unnested %>%
 
 ```
 
-Seems like the models fitted to data with a logarithmically transformed dv display a smaller deviation from the normal distribution, which could be further corrected with filtering individual extreme values.
+
+## Homoscedasticity assumption
 
 
 ```{r}
@@ -290,12 +319,13 @@ Seems like the models fitted to data with a logarithmically transformed dv displ
 models_df_unnested %>% 
   ggplot(aes(predicted, residuals)) +
   geom_point() +
-  facet_wrap(~formula, scales = "free") +
+  facet_wrap(~formula, scales = "free", ncol = 3) +
   geom_smooth(se = F)
 
 ```
 
 
+## Comparison of performance measures
 
 
 ```{r}
@@ -305,6 +335,9 @@ models_df %>%
   html_table()
   
 ```
+
+
+## Models
 
 
 ```{r}

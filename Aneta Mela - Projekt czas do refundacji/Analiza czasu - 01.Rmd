@@ -20,7 +20,7 @@ output:
 if (requireNamespace("thematic")) 
   thematic::thematic_rmd(font = "auto")
 
-pacman::p_load(rstatix, readxl, tidyverse, lme4, modelr)
+pacman::p_load(rstatix, readxl, tidyverse, lme4, modelr, DT)
 
 df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
 
@@ -35,18 +35,40 @@ df <- df %>%
 
 
 
+
+
 **ROZWAŻYĆ OPCJĘ Z WYBRANIEM TYLKO TYCH WSKAZAŃ, GDZIE BYŁA JAKAŚ MINIMALNA LICZBA OCENIAJĄCYCH KRAJÓW?**
 
 -   dodać jako parametr do automatyzacji
 -   At least 2 observations?
 -   
 
-**ROZWAŻYĆ MODEL NIE TYLKO Z RANDOM INTERCEPTS, ALE TEŻ RANDOM SLOPES**
 
 
-# Uwagi
+
+
+# Important notes
 
 Celem logarytmizacji dni do rekomendacji, liczba dni, która wynosiła zero zostala przekształcona do 1 (to dało możliwość obliczenia logarytmu).
+
+
+## General conclusions from multiple simulations
+
+The smaller variance of the errors on the lower side of the predicted values remains regardless of
+
+-   the minimum number of recommendations per indication
+-   transformation of the dv (after which the smaller error variability shifts to the  the higher side of the predicted values) 
+-   applying different forms of weights
+-   removing outliers
+-   adding an interaction between therapeutic area and country
+
+This strongly suggests that there is some hidden variable that was not measured
+
+
+## Pytania do Anety
+
+-   Jakiego było kryterium usunięcia wybranych obserwacji z liczbą dni do rekomendacji?
+-   W jaki sposób planujesz uzasadnić w artykule wybranie tych krótszych rekomendacji w ramach tych, gdzie dochodziło do powtórzeń?
 
 
 # Methodology
@@ -67,7 +89,7 @@ There is definitely a theoretical basis for including therapeutic area, as the p
 Whether the recommendation was positive or negative might also play a role. It should be easier to find reasons to dismiss a drug than to accept it, as rejection is often a result of not meeting just one of many criteria, while acceptance is more often associated with meeting all of them. 
 
 
-# Infrastruktura
+# General setup
 
 
 
@@ -279,10 +301,12 @@ df %>%
 
 
 ```{r}
-
 df %>% 
   get_summary_stats(dni_do_rekomendacji)
+```
 
+
+```{r}
 df %>% 
   filter(dni_do_rekomendacji == 0)
 
@@ -441,6 +465,16 @@ df %>%
 ```
 
 
+
+```{r}
+df %>% 
+  ggplot(aes(Rekomendacja, dni_do_rekomendacji)) +
+  geom_boxplot()
+
+```
+
+
+
 ```{r}
 
 df %>% 
@@ -451,9 +485,43 @@ df %>%
 ```
 
 
+```{r}
+df %>% 
+  ggplot(aes(Therapeutic_lumped, dni_do_rekomendacji)) +
+  geom_boxplot() +
+  facet_wrap(~Kraj)
+
+```
+The boxplots reveal an interaction effect between country's agency and therapeutic area. 
+In other words, the effect of therapetuic area on the number of days differ from country to country with some countries displaying moore or less uniform prioritazation regardless of the area (e.g. Germany and Wales), while some countries seem to give a higher priority to specific areas (e.g. Poland, Australia, or Canada).
+
+
+```{r}
+
+df %>% 
+  group_by(Therapeutic_lumped, Kraj) %>% 
+  get_summary_stats(dni_do_rekomendacji)
+
+```
+
+
+
 
 
 # Model selection
+
+
+
+```{r}
+# Add an interaction effect as a possible weight
+df <- df %>% 
+  mutate(kraj_therap = interaction(Therapeutic_lumped, Kraj))
+
+
+
+```
+
+
 
 
 ## Null model vs Only random effects model
@@ -463,10 +531,22 @@ df %>%
 
 ```{r}
 
-glm_null <- glm(log_days ~ 1, data = df)
-random_null <- lmer(log_days ~ 1 + (1|ID), data = df)
-random_null2 <- lmer(log_days ~ 1 + (1|Year), data = df)
-random_null3 <- lmer(log_days ~ Year + (1 + Year|ID), data = df)
+
+
+
+
+
+```
+
+
+
+
+```{r}
+
+glm_null <- glm(dni_do_rekomendacji ~ 1, data = df)
+random_null <- lmer(dni_do_rekomendacji ~ 1 + (1|ID), data = df)
+random_null2 <- lmer(dni_do_rekomendacji ~ 1 + (1|Year), data = df)
+random_null3 <- lmer(dni_do_rekomendacji ~ Year + (1 + Year|ID), data = df)
 
 
 null_models <- tibble(
@@ -486,22 +566,9 @@ null_models %>%
 ```
 
 
-
-## OLS Linear model fit
-
-
-```{r}
+Comparing the null linear model and null mixed effects models with varied random effects, the model with indication as random effects provides the best solution. Therefore, there is a statistical rationale to apply indication as the random effect.
 
 
-
-mod_lm <- lm(log_days ~ Kraj + Therapeutic_lumped + Rekomendacja, data = df)
-mod_mixed <- lmer(log_days ~ Kraj + Therapeutic_lumped + Rekomendacja + (1|ID), data = df)
-
-c(
-  lm = AIC(mod_lm), mixed = AIC(mod_mixed)
-)
-
-```
 
 
 
@@ -581,7 +648,7 @@ preliminary_mods <- preliminary_mods %>%
 hist_resid <- function(model) {
   p <- ggplot(mapping = aes(residuals(model))) +
     geom_histogram()
-  print(p)
+  return(p)
 }
 
 homoscedasticity_plot <- function(model) {
@@ -590,7 +657,7 @@ homoscedasticity_plot <- function(model) {
     geom_point() +
     geom_smooth(se = F)
   
-  print(p)
+  return(p)
 }
 
 
@@ -680,10 +747,14 @@ preliminary_mods <- preliminary_mods %>%
 
 # Function for adding ggplot title
 add_title <- function(p, title) {
+  
   force(title)
+  
   p <- p +
     labs(title = title)
-  print(p)
+  
+  
+  return(p)
 }
 
 
@@ -739,6 +810,9 @@ However, both continue to have a substantial heteroscedasticity.
 #### Applying varIdent weigths
 
 
+Dodać tutaj jeszcze jedną kombinację - z i bez efektu interakcji
+
+
 ```{r}
 library(nlme)
 
@@ -746,7 +820,7 @@ library(nlme)
 weights_vars <- str_c("~ 1 | ", c("Kraj", "Therapeutic_lumped", "Rekomendacja")) 
 
 # Create a vector with fixed effects formulas for different transformations of DVs
-fixed_formulas <- str_c(c("log_days", "dni_do_rekomendacji"), " ~ Kraj + Therapeutic_lumped + Rekomendacja") 
+# fixed_formulas <- str_c(c("log_days", "dni_do_rekomendacji"), " ~ Kraj + Therapeutic_lumped + Rekomendacja + # Therapeutic_lumped:Kraj") 
 
 # Create a tibble with all combinations of dataframes, methods, weights and DV transformations
 weighted_mods <- expand_grid(
@@ -754,7 +828,8 @@ weighted_mods <- expand_grid(
   data = dataframes,
   method = c("ML", "REML"),
   weight_var = c(
-    "Kraj", "Therapeutic_lumped", "Rekomendacja"
+    "kraj_therap"
+    # "Kraj", "Therapeutic_lumped", "Rekomendacja"
     )
 ) %>% 
   mutate(
@@ -767,10 +842,11 @@ weighted_mods <- expand_grid(
       "; min obs per indication = ", min_obs,
       "; method = ", method
       ), # Vector for plot titles
-    fixed = str_c(DV, " ~ Kraj + Therapeutic_lumped + Rekomendacja") %>% map(as.formula),
+    fixed = str_c(DV, " ~ Kraj + Therapeutic_lumped + Rekomendacja ") %>% map(as.formula),
     weights = str_c("~ 1 | ", weight_var) %>% map(as.formula)
   )
 
+# + Therapeutic_lumped:Kraj
 
 ```
 
@@ -811,6 +887,7 @@ weighted_mods2 <- weighted_mods2 %>%
     r2_marg = map_dbl(mod, possibly(r2_marginal, otherwise = Inf)),
     r2_cond = map_dbl(mod, possibly(r2_conditional, otherwise = Inf))
     ) %>% 
+  mutate(across(c(aic, r2_marg, r2_cond), ~round(., 3))) %>% 
   arrange(desc(r2_marg))
 ```
 
@@ -819,7 +896,7 @@ weighted_mods2 <- weighted_mods2 %>%
 # Produce the table
 weighted_mods2 %>% 
   select(mod_details, aic, r2_marg, r2_cond) %>% 
-  html_table()
+  datatable()
 
 ```
 
@@ -846,7 +923,8 @@ weighted_mods2$homo
 ```
 
 
-None of the weighted models was corrected for heteroscedasticity.
+None of the weighted models was corrected for heteroscedasticity. 
+Moreover, models with untransformed number of days seem to exhibit a non-linear relationship.
 
 
 
@@ -955,14 +1033,20 @@ weighted_fitted <- weighted_fitted %>%
 weighted_fitted2 <-  weighted_fitted2 %>% 
   mutate(
     aic = map_dbl(mod, possibly(AIC, otherwise = Inf)),
-    r2_marg = map_dbl(mod, possibly(r2_marginal, otherwise = Inf)) %>% round(3),
+    r2_marg = map_dbl(mod, possibly(r2_marginal, otherwise = Inf)),
     r2_cond = map_dbl(mod, possibly(r2_conditional, otherwise = Inf))
     ) %>% 
+  mutate(across(c(aic, r2_marg, r2_cond), ~round(., 3))) %>% 
   arrange(aic)
 
 
-```
 
+weighted_fitted2 %>% 
+  select(mod_details, aic, r2_marg, r2_cond) %>% 
+  datatable()
+
+```
+Applying power and fitted 
 
 
 ```{r}
@@ -982,6 +1066,25 @@ weighted_fitted2$homo
 
 
 
+
+#### Other solutions
+
+-   bootstrap for the estimated marginal means
+    -   https://stackoverflow.com/questions/75852979/bootstrapping-emmeans-derived-from-a-multilevel-regression-but-error-in-t-star
+    -   https://stackoverflow.com/questions/39358438/r-obtain-coefficientsci-from-bootstrapping-mixed-effect-model-results
+-   robust errors
+
+
+**Dodać analizę symulacyjną z efektem interakcji**
+
+
+# Final model analysis
+
+
+
+ 
+ 
+## Fit the model
 
 
 ```{r}
@@ -1003,66 +1106,9 @@ mixed_best <- lme(
 ) 
 
 
-```
-
-
-
-#### Test pojedynczy
-
-```{r}
-residuals(weighted_mods2$mod[[1]]) %>% 
-  scale() %>% 
-  length()
-
-
-
-mod_poj <- lme(
-  fixed = log_days ~ Kraj + Therapeutic_lumped + Rekomendacja, 
-  random = ~ 1 | ID,
-  weights =  varIdent(form = ~1 | Kraj),
-  data = filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]), method = "ML"
-  
-) 
-
-
-plot(mod_poj)
-plot(preliminary_mods$model_reduced[[1]])
-
-par(mfrow = c(1,2))
-plot(predict(mod_poj), residuals(mod_poj))
-plot(predict(preliminary_mods$model_reduced[[1]]), residuals(preliminary_mods$model_reduced[[1]]))
-```
-
-
-```{r}
-lme(
-  fixed = log_days ~ Kraj + Therapeutic_lumped + Rekomendacja, 
-  random = ~ 1 | ID,
-  weights =  varIdent(form = ~1 | Kraj),
-  data = filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]), method = "ML"
-  
-) %>% 
-  homoscedasticity_plot() +
-  geom_hline(yintercept = 0, color = "red")
-
-filter_residuals(df_IDreduced, weighted_mods2$mod[[1]]) 
-
-
-
-
 
 ```
 
-
-#### Other solutions
-
--   bootstrap for the estimated marginal means
-    -   https://stackoverflow.com/questions/75852979/bootstrapping-emmeans-derived-from-a-multilevel-regression-but-error-in-t-star
-    -   https://stackoverflow.com/questions/39358438/r-obtain-coefficientsci-from-bootstrapping-mixed-effect-model-results
--   robust errors
-
-
-# Final model analysis
 
 
 
