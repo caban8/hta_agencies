@@ -13,10 +13,24 @@ output:
       heading_font:
         google: Proza Libre
 params:
-  transformation: "none"
-  country_fixed: true
+  transformation: 
+    label: "Transformation of the dependent variable"
+    value: none
+    input: select
+    choices: [none, logarithmic]
+  random_effects: 
+    label: Variables as random effects
+    value: "|ID"
+    input: select
+    choices: ["|ID", "|Year", "+ Year | ID"]
   maximum_days: 3000
-  min_recommendations: 1
+  min_recommendations: 
+    label: "Minimum number of recommendations per indication"
+    value: 1
+    input: slider
+    step: 1
+    min: 1
+    max: 11
 ---
 
 # Setup
@@ -28,7 +42,7 @@ if (requireNamespace("thematic"))
 knitr::opts_chunk$set(fig.width = 10, dpi = 300)
 
 
-pacman::p_load(rstatix, readxl, tidyverse, broom, lme4)
+pacman::p_load(rstatix, readxl, tidyverse, broom, lme4, DT)
 
 df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
 
@@ -155,6 +169,7 @@ dv <- c("dni_do_rekomendacji", "log_days")
 
 # Set additional controlling fixed effects
 control_pred <- c(
+  "Kraj",
   "Rekomendacja",
   "Drug_category",
   "Therapeutic_lumped",
@@ -173,13 +188,14 @@ control_pred <- c(
 control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>% 
   unlist(recursive = F) %>% 
   map(str_c, collapse = " + ") %>% 
-  unlist()
+  unlist() 
   
 
 
+
+
 # Set random effects
-random_effects <- c("(1|ID)", "(1|Kraj)", "(1 + ID|Year)", "(1|Year)")
-random_effects <- c("(1|ID)", "(1|Kraj)", "(1 + ID|Year)", "(1|Year)")
+random_effects <- str_c("(1", params$random_effects,  ")")
 
 
 
@@ -187,19 +203,17 @@ random_effects <- c("(1|ID)", "(1|Kraj)", "(1 + ID|Year)", "(1|Year)")
 # Set all combinations of model formulas
 model_formulas <- expand_grid(dv, control_pred2, random_effects) %>% 
   mutate(
-    Country_fixed = if_else(random_effects == "(1|ID)", "Kraj", ""),
     mod_formula = pmap_chr(
-      list(Country_fixed, control_pred2, random_effects), 
+      list(control_pred2, random_effects), 
       paste, 
       sep = " + "
       ),
     mod_formula = str_replace(mod_formula, "^.\\+", ""),
     formula = map2_chr(dv, mod_formula, str_c, sep = " ~ "),
     mod_formula = map(formula, as.formula),
-    transformation = if_else(dv == "dni_do_rekomendacji", "none", "logarithmic"),
-    Country_fixed = if_else(Country_fixed == "Kraj", T, F)
+    transformation = if_else(dv == "dni_do_rekomendacji", "none", "logarithmic")
     ) %>% 
-  select(transformation, Country_fixed, formula, mod_formula)
+  select(transformation, formula, mod_formula)
 
 
 
@@ -207,8 +221,7 @@ model_formulas <- expand_grid(dv, control_pred2, random_effects) %>%
 # Choose model types based on the selected parameters
 model_formulas2 <- model_formulas %>% 
   filter(
-    transformation == params$transformation, 
-    Country_fixed == params$country_fixed
+    transformation == params$transformation
     )
 
 ```
@@ -283,10 +296,8 @@ df <- df %>%
 # Mixed-effects models 
 
 
-## Full data analysis
 
 ```{r}
-
 # Fit all variations of mixed-effects models
 models_df <- model_formulas2 %>% 
   mutate(
@@ -296,11 +307,19 @@ models_df <- model_formulas2 %>%
     AIC = map_dbl(model, function(x) {AIC(logLik(x))}),
     r2_marg = map_dbl(model, r2_marginal),
     r2_cond = map_dbl(model, r2_conditional)
-  )
+  ) %>% 
+  arrange(desc(r2_marg))
 
 models_df_unnested <-  models_df %>% 
-  unnest(cols = c(residuals, predicted))  
+  unnest(cols = c(residuals, predicted)) %>% 
+  mutate(formula = fct_reorder(formula, desc(r2_marg)))
+```
 
+
+## Normality assumption
+
+
+```{r}
 models_df_unnested %>% 
   ggplot(aes(sample = residuals)) +
   geom_qq_line() +
@@ -314,7 +333,7 @@ models_df_unnested %>%
 ## Homoscedasticity assumption
 
 
-```{r}
+```{r fig.height=20}
 
 models_df_unnested %>% 
   ggplot(aes(predicted, residuals)) +
@@ -330,9 +349,8 @@ models_df_unnested %>%
 
 ```{r}
 models_df %>% 
-  arrange(AIC) %>% 
   select(formula, AIC, r2_marg, r2_cond) %>% 
-  html_table()
+  datatable()
   
 ```
 
@@ -343,10 +361,17 @@ models_df %>%
 ```{r}
 
 model_formulas2 %>% 
-  html_table()
+  html_table() %>% 
+  datatable()
 
 
 ```
+
+
+
+# Weigthed mixed-effects models
+
+
 
 
 
