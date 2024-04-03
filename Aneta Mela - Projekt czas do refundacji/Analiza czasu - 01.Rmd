@@ -720,13 +720,6 @@ preliminary_mods$VIF_full
 
 ```{r}
 
-# Extract function for reducing 
-filter_residuals <- function(data, model, cutoff = 3) {
-  
-  data %>% 
-    mutate(resid = residuals(model) %>% scale() %>% as.double()) %>% 
-    filter(abs(resid) <= cutoff)
-} 
 
 
 

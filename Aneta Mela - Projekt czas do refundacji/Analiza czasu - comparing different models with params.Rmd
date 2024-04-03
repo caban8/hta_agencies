@@ -2,7 +2,10 @@
 title: "Country comparison in terms of the time to recommendation"
 output: 
   html_document:
-    code_folding: show
+    code_folding: hide
+    toc: true
+    toc_depth: 2
+    toc_float: true
     theme:
       bg: "#202123"
       fg: "#B8BCC2"
@@ -18,14 +21,22 @@ params:
     value: none
     input: select
     choices: [none, logarithmic]
-  Therapeutic_lumped: true
+  Therapeutic_lumped: false
   Obszar_terapeutyczny: true
   Rekomendacja: true
   Drug_category: true
-  Year: true
+  Year: false
+  Therapeutic_lumped__Kraj: false
+  Therapeutic_lumped__Rekomendacja: false
+  Kraj__Rekomendacja: false
+  Kraj__Drug_category: false
+  Obszar_terapeutyczny__Kraj: false
+  Obszar_terapeutyczny__Rekomendacja: false
+  Obszar_terapeutyczny__Drug_category: false
+  Rekomendacja__Drug_category: false
   random_effects: 
     label: "Variables as random effects"
-    value: "|ID"
+    value: "(1|ID)"
     input: select
     choices: [
     "(1|ID)", 
@@ -60,7 +71,7 @@ params:
 if (requireNamespace("thematic")) 
   thematic::thematic_rmd(font = "auto")
 
-knitr::opts_chunk$set(fig.width = 10, dpi = 300)
+knitr::opts_chunk$set(out.width = "90%", dpi = 300)
 
 
 
@@ -108,6 +119,8 @@ df <- df %>%
     ) 
 
 
+# Set up plan for parallet computing
+plan(multisession) 
 
 
 
@@ -198,22 +211,44 @@ control_choose <- c(
   params$Obszar_terapeutyczny,
   params$Rekomendacja,
   params$Drug_category,
-  params$Year)
+  params$Year,
+  params$Therapeutic_lumped__Kraj,
+  params$Therapeutic_lumped__Rekomendacja,
+  params$Kraj__Rekomendacja,
+  params$Kraj__Drug_category,
+  params$Obszar_terapeutyczny__Kraj,
+  params$Obszar_terapeutyczny__Rekomendacja,
+  params$Obszar_terapeutyczny__Drug_category,
+  params$Rekomendacja__Drug_category
+  )
 
-# Select
+
+
+
+# Select predictors
 control_pred <- c(
+  "Therapeutic_lumped",
   "Obszar_terapeutyczny",
   "Rekomendacja",
   "Drug_category",
-  "Therapeutic_lumped",
+  "Year",
   "Therapeutic_lumped:Kraj",
   "Therapeutic_lumped:Rekomendacja",
   "Kraj:Rekomendacja",
+  "Kraj:Drug_category",
   "Obszar_terapeutyczny:Kraj",
-  "Year"
-  ) 
+  "Obszar_terapeutyczny:Rekomendacja",
+  "Obszar_terapeutyczny:Drug_category",
+  "Rekomendacja:Drug_category"
+  )[control_choose]
 
-control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>% 
+
+# Maxium size of combinations
+combinations <- sum(control_choose)
+
+
+# Create all formula combinations always including country as one of the fixed effects
+control_pred2 <- map(1:combinations, combn, x = control_pred, simplify = F) %>% 
   unlist(recursive = F) %>% 
   map(sort) %>% 
   map(function(x) {c("Kraj", x)}) %>% 
@@ -342,16 +377,25 @@ df <- df %>%
 models_df <- model_formulas2 %>% 
   mutate(
     model = future_map(mod_formula, lmer, data = df),
-    residuals = future_map(model, residuals),
+    resids = future_map(model, residuals),
     predicted = future_map(model, predict),
     AIC = future_map_dbl(model, function(x) {AIC(logLik(x))}),
     r2_marg = future_map_dbl(model, r2_marginal),
     r2_cond = future_map_dbl(model, r2_conditional)
   ) %>% 
-  arrange(desc(r2_marg))
+  arrange(desc(r2_marg)) %>% 
+  slice(1:50) # Select only the first 40 models to avoid exceeding png max size
 
+
+# Set up the height of plot
+fig_height <- ceiling(nrow(models_df) / 3) * 2
+
+
+
+
+# Unnest for plotting 
 models_df_unnested <-  models_df %>% 
-  unnest(cols = c(residuals, predicted)) %>% 
+  unnest(cols = c(resids, predicted)) %>% 
   mutate(formula = fct_reorder(formula, desc(r2_marg)))
 ```
 
@@ -359,12 +403,12 @@ models_df_unnested <-  models_df %>%
 ## Normality assumption
 
 
-```{r}
+```{r fig.height=fig_height}
 models_df_unnested %>% 
-  ggplot(aes(sample = residuals)) +
+  ggplot(aes(sample = resids)) +
   geom_qq_line() +
   geom_qq() +
-  facet_wrap(~formula, scales = "free")
+  facet_wrap(~formula, scales = "free", ncol = 3)
 
 
 ```
@@ -373,10 +417,10 @@ models_df_unnested %>%
 ## Homoscedasticity assumption
 
 
-```{r fig.height=20}
+```{r fig.height=fig_height}
 
 models_df_unnested %>% 
-  ggplot(aes(predicted, residuals)) +
+  ggplot(aes(predicted, resids)) +
   geom_point() +
   facet_wrap(~formula, scales = "free", ncol = 3) +
   geom_smooth(se = F)
@@ -404,6 +448,75 @@ model_formulas2 %>%
   select(-mod_formula) %>% 
   datatable()
 
+
+```
+
+# Correcting for outliers
+
+
+```{r}
+
+
+
+# Update models by removing outliers
+models_reduced <- models_df %>% 
+  mutate(
+    data = future_map(model, filter_residuals, data = df),
+    model = future_map2(mod_formula, data, lmer),
+    resids = future_map(model, residuals),
+    predicted = future_map(model, predict),
+    AIC = future_map_dbl(model, function(x) {AIC(logLik(x))}),
+    r2_marg = future_map_dbl(model, r2_marginal),
+    r2_cond = future_map_dbl(model, r2_conditional)
+  ) %>% 
+  arrange(desc(r2_marg))
+
+reduced_unnested <-  models_reduced %>% 
+  unnest(cols = c(resids, predicted)) %>% 
+  mutate(formula = fct_reorder(formula, desc(r2_marg)))
+
+
+
+
+```
+
+
+
+
+## Homoscedasticity assumption
+
+
+```{r fig.height=fig_height}
+
+reduced_unnested %>% 
+  ggplot(aes(predicted, resids)) +
+  geom_point() +
+  facet_wrap(~formula, scales = "free", ncol = 3) +
+  geom_smooth(se = F)
+
+```
+
+
+## Normality assumption
+
+
+```{r fig.height=fig_height}
+reduced_unnested %>% 
+  ggplot(aes(sample = resids)) +
+  geom_qq_line() +
+  geom_qq() +
+  facet_wrap(~formula, scales = "free", ncol = 3)
+
+
+```
+
+
+## Comparison of performances
+
+```{r}
+models_reduced %>% 
+  select(formula, AIC, r2_marg, r2_cond) %>% 
+  datatable()
 
 ```
 
@@ -502,7 +615,7 @@ weighted_mods_unnested %>%
   ggplot(aes(sample = residuals)) +
   geom_qq_line() +
   geom_qq() +
-  facet_wrap(~formula, scales = "free")
+  facet_wrap(~formula, scales = "free", ncol = 3)
 
 
 ```
