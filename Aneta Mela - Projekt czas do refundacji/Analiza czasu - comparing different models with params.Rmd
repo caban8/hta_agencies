@@ -18,11 +18,24 @@ params:
     value: none
     input: select
     choices: [none, logarithmic]
+  Therapeutic_lumped: true
+  Obszar_terapeutyczny: true
+  Rekomendacja: true
+  Drug_category: true
+  Year: true
   random_effects: 
-    label: Variables as random effects
+    label: "Variables as random effects"
     value: "|ID"
     input: select
-    choices: ["|ID", "|Year", "+ Year | ID"]
+    choices: [
+    "(1|ID)", 
+    "(1|Year)", 
+    "(1|Kraj)",
+    "(1|Year/ID)", 
+    "(1 + ID | Kraj)",
+    "(1 | ID) + (1 | Year) + (1 | Kraj)",
+    ]
+  minimum_days: 0
   maximum_days: 3000
   min_recommendations: 
     label: "Minimum number of recommendations per indication"
@@ -31,6 +44,14 @@ params:
     step: 1
     min: 1
     max: 11
+  weighted_model:
+    label: "Include running models with weights"
+    value: false
+  weighted_var:
+    label: "Variable used for varIdent weighting"
+    value: Kraj
+    input: select
+    choices: [Kraj, Therapeutic_lumped, Rekomendacja, Drug_category]
 ---
 
 # Setup
@@ -42,7 +63,8 @@ if (requireNamespace("thematic"))
 knitr::opts_chunk$set(fig.width = 10, dpi = 300)
 
 
-pacman::p_load(rstatix, readxl, tidyverse, broom, lme4, DT)
+
+pacman::p_load(rstatix, readxl, tidyverse, broom, lme4, DT, nlme, future, furrr)
 
 df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
 
@@ -50,6 +72,9 @@ df <- df %>%
   select(-c(...1, ...2))
 
 
+
+
+options(digits=4)
 
 # Ustalam levels dla countries tak, żeby Poland było kategorią referencyjną
 Kraj_lvls <- c(
@@ -167,26 +192,32 @@ Params for iterated markdown knitting:
 # Set all forms of outcome variable
 dv <- c("dni_do_rekomendacji", "log_days")
 
-# Set additional controlling fixed effects
+# Set the fixed effects
+control_choose <- c(  
+  params$Therapeutic_lumped,
+  params$Obszar_terapeutyczny,
+  params$Rekomendacja,
+  params$Drug_category,
+  params$Year)
+
+# Select
 control_pred <- c(
-  "Kraj",
+  "Obszar_terapeutyczny",
   "Rekomendacja",
   "Drug_category",
   "Therapeutic_lumped",
-  "Therapeutic_lumped:Kraj"
-  # "Therapeutic_lumped:Rekomendacja",
-  # "Kraj:Rekomendacja"
-  # "Obszar_terapeutyczny", 
-  # "Obszar_terapeutyczny:Kraj"
-  # "Kat1_Korzyść_kliniczna",
-  # "Kat1_Efektywność_kosztowa"
-  # "Kat2_Wpływ_budżet",
-  # "Kat1_Bezpieczeństwo"
-  # "Year",
-  )
+  "Therapeutic_lumped:Kraj",
+  "Therapeutic_lumped:Rekomendacja",
+  "Kraj:Rekomendacja",
+  "Obszar_terapeutyczny:Kraj",
+  "Year"
+  ) 
 
 control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>% 
   unlist(recursive = F) %>% 
+  map(sort) %>% 
+  map(function(x) {c("Kraj", x)}) %>% 
+  unique() %>% 
   map(str_c, collapse = " + ") %>% 
   unlist() 
   
@@ -195,7 +226,7 @@ control_pred2 <- map(1:3, combn, x = control_pred, simplify = F) %>%
 
 
 # Set random effects
-random_effects <- str_c("(1", params$random_effects,  ")")
+random_effects <- params$random_effects
 
 
 
@@ -203,7 +234,7 @@ random_effects <- str_c("(1", params$random_effects,  ")")
 # Set all combinations of model formulas
 model_formulas <- expand_grid(dv, control_pred2, random_effects) %>% 
   mutate(
-    mod_formula = pmap_chr(
+    mod_formula = future_pmap_chr(
       list(control_pred2, random_effects), 
       paste, 
       sep = " + "
@@ -223,6 +254,10 @@ model_formulas2 <- model_formulas %>%
   filter(
     transformation == params$transformation
     )
+
+
+# Should weighted models be evaluated?
+weights_include <- params$weighted_model
 
 ```
 
@@ -262,9 +297,13 @@ df <- df %>%
   ungroup()
 
 
-# Remove missing data
+# Remove missing data and unnecessary variables
 df <- df %>% 
-  drop_na(dni_do_rekomendacji, Therapeutic_lumped, Rekomendacja, ID)
+  drop_na(dni_do_rekomendacji, Therapeutic_lumped, Rekomendacja, ID) %>% 
+  select(
+    ID, Year, 
+    Kraj, Therapeutic_lumped, Rekomendacja, Drug_category, Obszar_terapeutyczny,
+    dni_do_rekomendacji, log_days)
 
 
 # Add information about number of recommendations per indicaiton
@@ -284,7 +323,8 @@ df <- df %>%
 # 
 df <- df %>%
   filter(
-    dni_do_rekomendacji < params$maximum_days, # Observations below a given number of days
+    dni_do_rekomendacji >= params$minimum_days, # Observations below a given number of days
+    dni_do_rekomendacji <= params$maximum_days, # Observations below a given number of days
     ID_recommendations >= params$min_recommendations
     )
 
@@ -301,12 +341,12 @@ df <- df %>%
 # Fit all variations of mixed-effects models
 models_df <- model_formulas2 %>% 
   mutate(
-    model = map(mod_formula, lmer, data = df),
-    residuals = map(model, residuals),
-    predicted = map(model, predict),
-    AIC = map_dbl(model, function(x) {AIC(logLik(x))}),
-    r2_marg = map_dbl(model, r2_marginal),
-    r2_cond = map_dbl(model, r2_conditional)
+    model = future_map(mod_formula, lmer, data = df),
+    residuals = future_map(model, residuals),
+    predicted = future_map(model, predict),
+    AIC = future_map_dbl(model, function(x) {AIC(logLik(x))}),
+    r2_marg = future_map_dbl(model, r2_marginal),
+    r2_cond = future_map_dbl(model, r2_conditional)
   ) %>% 
   arrange(desc(r2_marg))
 
@@ -361,7 +401,7 @@ models_df %>%
 ```{r}
 
 model_formulas2 %>% 
-  html_table() %>% 
+  select(-mod_formula) %>% 
   datatable()
 
 
@@ -373,5 +413,121 @@ model_formulas2 %>%
 
 
 
+```{r eval= weights_include }
 
 
+
+# Set random effects
+random_weighted <- str_c("~1 ", params$random_effects) %>% as.formula()
+
+# Set weight
+weight_var <- str_c("~ 1 | ", params$weighted_var) %>% as.formula()
+
+
+# Fixed effects for the weighted model
+weighted_pred <- map(1:3, combn, x = control_pred, simplify = F) %>% 
+  unlist(recursive = F) %>% 
+  map(c, params$weighted_var) %>% 
+  map(unique) %>% 
+  map(sort) %>% 
+  unique() %>% 
+  map(str_c, collapse = " + ") %>% 
+  unlist() 
+
+
+
+
+# Create a tibble with all combinations of dataframes, methods, weights and DV transformations
+weighted_mods <- expand_grid(
+  dv, weighted_pred
+) %>% 
+  mutate(
+    formula = str_c(dv, " ~ ", weighted_pred),
+    mod_formula = map(formula, as.formula),
+    transformation = if_else(dv == "dni_do_rekomendacji", "none", "logarithmic")
+  ) %>% 
+  filter(
+    transformation == params$transformation
+  )
+
+
+
+
+
+
+
+# Fit all variations of mixed-effects weighted models
+weighted_mods2 <- weighted_mods %>% 
+  mutate(
+    model = future_map(
+      mod_formula, 
+      possibly(lme, quiet = TRUE, otherwise = NA),
+      data = df, 
+      random = random_weighted, 
+      weights = varIdent(form = weight_var)
+      ))
+
+# Add performance measures
+weighted_mods3 <- weighted_mods2 %>% 
+  filter(!map_lgl(model, ~is.logical(.))) %>% 
+  mutate(
+  residuals = map(model, residuals),
+  predicted = map(model, predict),
+  AIC = map_dbl(model, function(x) {AIC(logLik(x))}),
+  r2_marg = map_dbl(model, r2_marginal),
+  r2_cond = map_dbl(model, r2_conditional)
+  ) %>% 
+  arrange(desc(r2_marg))
+  
+    
+    
+    
+    
+    
+   
+
+weighted_mods_unnested <-  weighted_mods3 %>% 
+   unnest(cols = c(residuals, predicted)) %>% 
+   mutate(formula = fct_reorder(formula, desc(r2_marg)))
+
+```
+
+
+
+## Normality assumption
+
+
+```{r eval = weights_include}
+weighted_mods_unnested %>% 
+  ggplot(aes(sample = residuals)) +
+  geom_qq_line() +
+  geom_qq() +
+  facet_wrap(~formula, scales = "free")
+
+
+```
+
+
+## Homoscedasticity assumption
+
+
+```{r fig.height=20, eval=weights_include}
+
+weighted_mods_unnested %>% 
+  ggplot(aes(predicted, residuals)) +
+  geom_point() +
+  facet_wrap(~formula, scales = "free", ncol = 3) +
+  geom_smooth(se = F)
+
+```
+
+
+## Comparison of performance measures
+
+
+```{r eval=weights_include}
+weighted_mods3 %>% 
+  select(formula, AIC, r2_marg, r2_cond) %>% 
+  datatable()
+  
+```
