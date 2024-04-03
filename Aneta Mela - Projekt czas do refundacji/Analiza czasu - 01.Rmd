@@ -115,6 +115,14 @@ html_table <- function(x) {
 ```
 
 
+## Functions
+
+```{r}
+# Import functions for performance measures
+source("Funkcje/performance functions.R")
+```
+
+
 
 # Data cleaning
 
@@ -216,7 +224,7 @@ indication_info <- df %>%
 specific_info <- df %>% 
   select(Obserwacja_nr, ID, Data_rejestracji, Data_rekomendacji, starts_with("Is"), Biosimilar, 
          Link_do_rekomendacji, Rekomendowane_wskazanie, starts_with("Kat"), Kraj_n, 
-         Kategoria_lek, Kategoria_lek_n)
+         Kategoria_lek, Kategoria_lek_n) 
 
 
 # Isolate the dataset for the analyses
@@ -224,7 +232,7 @@ df <- df %>%
   select(
     ID, Year, 
     Kraj, Therapeutic_lumped, Rekomendacja, Drug_category, Obszar_terapeutyczny,
-    dni_do_rekomendacji, log_days)
+    dni_do_rekomendacji, log_days) 
 
 ```
 
@@ -261,12 +269,18 @@ An important issue is what should be the minimum number of observations per indi
 
 
 ```{r}
+# Number of recommendation for a given indication
 indications_numbers <- df %>% 
-  count(ID) %>% 
-  count(n) %>% 
-  set_names(c("observations", "indications"))
+  count(ID) 
+
+
+# Join with the dataset
+df <- left_join(df, indications_numbers)
+
 
 indications_numbers %>% 
+  count(n) %>% 
+  set_names(c("observations", "indications")) %>% 
   html_table()
 ```
 
@@ -290,6 +304,15 @@ df %>%
 ```
 
 
+## Add number of recommendations per indications
+
+```{r}
+df <- df %>% 
+  mutate(
+    ID = factor(ID) # ID as representing separate indications
+  )
+
+```
 
 
 
@@ -542,11 +565,42 @@ df %>%
 
 ```{r}
 
+# Control the min number of recommendations per indication
+df_final <- df %>% 
+  filter(n >= 1) %>% 
+  filter(dni_do_rekomendacji != 0)
+```
+
+
+```{r}
+
+# log_days ~ Kraj + Therapeutic_lumped:Kraj + (1|Drug_category) + (1|Kraj)
+
+# Problems with singularity
+# log_days ~ Kraj + Drug_category + Kraj:Drug_category + Rekomendacja + Rekomendacja:Drug_category + Year + (1 + ID | Kraj)
+
+# Problems with convergence
+# log_days ~ Kraj + Rekomendacja + (1 + Year | Kraj)
+
+# No problem with singularity
+# log_days ~ Kraj +  Obszar_terapeutyczny + Rekomendacja + Year + (1|Kraj)
+
+
+
+# Najlepsze
+# log_days ~ Kraj + Drug_category + Kraj:Drug_category + Obszar_terapeutyczny + Rekomendacja + Year + (1|ID)
+# log_days ~ Kraj + Drug_category + Obszar_terapeutyczny + Rekomendacja + (1|Kraj)
+# log_days ~ Kraj + Drug_category + Obszar_terapeutyczny + (1|ID) + (1|Kraj)
+
+# log_days ~ Kraj + Kraj:Rekomendacja + Obszar_terapeutyczny + (1|ID) + (1|Drug_category)
+
+form <- formula(log(dni_do_rekomendacji) ~ Kraj + Obszar_terapeutyczny + Year + (1|ID))
+
 
 
 best_fit <- lmer(
-  log_days ~ Kraj + Drug_category + Kraj:Drug_category + Year + (1 + ID | Kraj),
-  data = df
+  formula = form,
+  data = df_final
   )
 
 
@@ -556,17 +610,58 @@ best_fit <- lmer(
 ## Assumptions
 
 ```{r}
-homo
+
+
+hist_resid(best_fit)
+
+```
+
+
+```{r}
+homoscedasticity_plot(best_fit)
+
+```
+
+
+## Correct for outliers
+
+
+```{r}
+df_filtered <- filter_residuals(df_final, best_fit)
+
+
+best_fit2 <- lmer(
+  formula = form,
+  data = df_filtered
+  )
+
+
 
 ```
 
 
 
+### Assumptions after filtering
+
+```{r}
+
+
+hist_resid(best_fit2)
+
+```
 
 
 ```{r}
-# confint(mixed_best)
-intervals(mixed_best)
+homoscedasticity_plot(best_fit2)
+
+```
+
+
+
+```{r}
+# confint(best_fit2)
+
+summary(best_fit2)
 
 ```
 
@@ -582,7 +677,7 @@ https://stats.oarc.ucla.edu/r/faq/how-can-i-estimate-the-standard-error-of-trans
 library(emmeans)
 
 # Obliczam różnice dla wszystkich par krajów
-emm <- emmeans(mixed_best, pairwise ~ Kraj, type = "response")
+emm <- emmeans(best_fit2, pairwise ~ Kraj, type = "response")
 
 
 
@@ -623,7 +718,8 @@ posthoc1 %>%
     est = str_c(ratio, " (", SE, ")", sig)
   ) %>% 
   select(Country1, Country2, est) %>% 
-  pivot_wider(names_from = Country2, values_from = est, names_sort = T)
+  pivot_wider(names_from = Country2, values_from = est, names_sort = T) %>% 
+  html_table()
 ```
 
 

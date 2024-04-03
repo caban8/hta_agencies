@@ -18,7 +18,7 @@ output:
 params:
   transformation: 
     label: "Transformation of the dependent variable"
-    value: none
+    value: logarithmic
     input: select
     choices: [none, logarithmic]
   Therapeutic_lumped: false
@@ -42,8 +42,20 @@ params:
     "(1|ID)", 
     "(1|Year)", 
     "(1|Kraj)",
-    "(1|Year/ID)", 
-    "(1 + ID | Kraj)",
+    # "(1 + ID | Kraj)",
+    "(1|ID) + (1|Kraj)",
+    "(1|ID) + (1|Drug_category)",
+    "(1|ID) + (1|Rekomendacja)",
+    "(1|ID) + (1|Obszar_terapeutyczny)",
+    "(1|Rekomendacja) + (1|Kraj)",
+    "(1|Drug_category) + (1|Kraj)",
+    "(1|Kraj) + (1|Kraj:Drug_category)",
+    "(1|Obszar_terapeutyczny) + (1|Kraj)",
+    "(1|Obszar_terapeutyczny) + (1|Kraj:Obszar_terapeutyczny)",
+    # "(1|ID) + (1|ID:Kraj)",
+    "(1|Year) + (1|Kraj)",
+    "(1|Kraj) + (1|Kraj:Year)",
+    "(1|Kraj) + (1|Year:Kraj)",
     "(1 | ID) + (1 | Year) + (1 | Kraj)",
     ]
   minimum_days: 0
@@ -338,7 +350,10 @@ df <- df %>%
   select(
     ID, Year, 
     Kraj, Therapeutic_lumped, Rekomendacja, Drug_category, Obszar_terapeutyczny,
-    dni_do_rekomendacji, log_days)
+    dni_do_rekomendacji, log_days) %>% 
+  mutate(
+    ID = factor(ID) # ID as representing separate indications
+  )
 
 
 # Add information about number of recommendations per indicaiton
@@ -383,7 +398,7 @@ models_df <- model_formulas2 %>%
     r2_marg = future_map_dbl(model, r2_marginal),
     r2_cond = future_map_dbl(model, r2_conditional)
   ) %>% 
-  arrange(desc(r2_marg)) %>% 
+  arrange(AIC) %>% 
   slice(1:50) # Select only the first 40 models to avoid exceeding png max size
 
 
@@ -396,7 +411,7 @@ fig_height <- ceiling(nrow(models_df) / 3) * 2
 # Unnest for plotting 
 models_df_unnested <-  models_df %>% 
   unnest(cols = c(resids, predicted)) %>% 
-  mutate(formula = fct_reorder(formula, desc(r2_marg)))
+  mutate(formula = fct_reorder(formula, AIC))
 ```
 
 
@@ -469,11 +484,11 @@ models_reduced <- models_df %>%
     r2_marg = future_map_dbl(model, r2_marginal),
     r2_cond = future_map_dbl(model, r2_conditional)
   ) %>% 
-  arrange(desc(r2_marg))
+  arrange(AIC)
 
 reduced_unnested <-  models_reduced %>% 
   unnest(cols = c(resids, predicted)) %>% 
-  mutate(formula = fct_reorder(formula, desc(r2_marg)))
+  mutate(formula = fct_reorder(formula, AIC))
 
 
 
@@ -531,7 +546,8 @@ models_reduced %>%
 
 
 # Set random effects
-random_weighted <- str_c("~1 ", params$random_effects) %>% as.formula()
+random_weighted <- str_replace_all(params$random_effects, pattern = "\\(|\\)", "")
+random_weighted <- str_c("~", random_weighted) %>% as.formula()
 
 # Set weight
 weight_var <- str_c("~ 1 | ", params$weighted_var) %>% as.formula()
