@@ -26,14 +26,9 @@ params:
   Rekomendacja: true
   Drug_category: true
   Year: false
-  Therapeutic_lumped__Kraj: false
-  Therapeutic_lumped__Rekomendacja: false
-  Kraj__Rekomendacja: false
-  Kraj__Drug_category: false
-  Obszar_terapeutyczny__Kraj: false
-  Obszar_terapeutyczny__Rekomendacja: false
-  Obszar_terapeutyczny__Drug_category: false
-  Rekomendacja__Drug_category: false
+  Interactions:
+    label: "Include interactions"
+    value: false
   random_effects: 
     label: "Variables as random effects"
     value: "(1|ID)"
@@ -42,8 +37,10 @@ params:
     "(1|ID)", 
     "(1|Year)", 
     "(1|Kraj)",
+    "(1|Obszar_terapeutyczny)",
     # "(1 + ID | Kraj)",
     "(1|ID) + (1|Kraj)",
+    "(1|ID) + (1|Year)",
     "(1|ID) + (1|Drug_category)",
     "(1|ID) + (1|Rekomendacja)",
     "(1|ID) + (1|Obszar_terapeutyczny)",
@@ -67,14 +64,14 @@ params:
     step: 1
     min: 1
     max: 11
-  weighted_model:
-    label: "Include running models with weights"
-    value: false
   weighted_var:
     label: "Variable used for varIdent weighting"
     value: Kraj
     input: select
-    choices: [Kraj, Therapeutic_lumped, Rekomendacja, Drug_category]
+    choices: [Kraj, Obszar_terapeutyczny, Therapeutic_lumped, Rekomendacja, Drug_category]
+  weighted_model:
+    label: "Include running models with weights"
+    value: false
 ---
 
 # Setup
@@ -217,54 +214,57 @@ Params for iterated markdown knitting:
 # Set all forms of outcome variable
 dv <- c("dni_do_rekomendacji", "log_days")
 
-# Set the fixed effects
-control_choose <- c(  
+# Set up the fixed effects
+control_simple <- c(  
   params$Therapeutic_lumped,
   params$Obszar_terapeutyczny,
   params$Rekomendacja,
   params$Drug_category,
-  params$Year,
-  params$Therapeutic_lumped__Kraj,
-  params$Therapeutic_lumped__Rekomendacja,
-  params$Kraj__Rekomendacja,
-  params$Kraj__Drug_category,
-  params$Obszar_terapeutyczny__Kraj,
-  params$Obszar_terapeutyczny__Rekomendacja,
-  params$Obszar_terapeutyczny__Drug_category,
-  params$Rekomendacja__Drug_category
-  )
+  params$Year)
 
 
-
-
-# Select predictors
-control_pred <- c(
+control_simple <- c(
   "Therapeutic_lumped",
   "Obszar_terapeutyczny",
   "Rekomendacja",
   "Drug_category",
-  "Year",
-  "Therapeutic_lumped:Kraj",
-  "Therapeutic_lumped:Rekomendacja",
-  "Kraj:Rekomendacja",
-  "Kraj:Drug_category",
-  "Obszar_terapeutyczny:Kraj",
-  "Obszar_terapeutyczny:Rekomendacja",
-  "Obszar_terapeutyczny:Drug_category",
-  "Rekomendacja:Drug_category"
-  )[control_choose]
+  "Year")[control_simple]
+
 
 
 # Maxium size of combinations
-combinations <- sum(control_choose)
+combinations <- length(control_simple)
 
 
 # Create all formula combinations always including country as one of the fixed effects
-control_pred2 <- map(1:combinations, combn, x = control_pred, simplify = F) %>% 
+control_simple2 <- map(1:combinations, combn, x = control_simple, simplify = F) %>% 
   unlist(recursive = F) %>% 
   map(sort) %>% 
   map(function(x) {c("Kraj", x)}) %>% 
-  unique() %>% 
+  unique() 
+
+
+
+# Add interaction effects
+control_int <- control_simple2 %>% 
+  map(
+    combn,
+    m = 2,
+    FUN = function(x) {str_c(x, collapse = ":")}
+  ) %>% 
+  {map2(control_simple2, ., c)}
+
+
+
+if (params$Interactions) {
+  combined_control <- c(control_simple2, control_int)
+} else {combined_control <- control_simple2}
+
+
+
+
+
+combined_control2 <- combined_control %>% 
   map(str_c, collapse = " + ") %>% 
   unlist() 
   
@@ -279,10 +279,10 @@ random_effects <- params$random_effects
 
 
 # Set all combinations of model formulas
-model_formulas <- expand_grid(dv, control_pred2, random_effects) %>% 
+model_formulas <- expand_grid(dv, combined_control2, random_effects) %>% 
   mutate(
     mod_formula = future_pmap_chr(
-      list(control_pred2, random_effects), 
+      list(combined_control2, random_effects), 
       paste, 
       sep = " + "
       ),
@@ -554,14 +554,7 @@ weight_var <- str_c("~ 1 | ", params$weighted_var) %>% as.formula()
 
 
 # Fixed effects for the weighted model
-weighted_pred <- map(1:3, combn, x = control_pred, simplify = F) %>% 
-  unlist(recursive = F) %>% 
-  map(c, params$weighted_var) %>% 
-  map(unique) %>% 
-  map(sort) %>% 
-  unique() %>% 
-  map(str_c, collapse = " + ") %>% 
-  unlist() 
+weighted_pred <- combined_control2
 
 
 

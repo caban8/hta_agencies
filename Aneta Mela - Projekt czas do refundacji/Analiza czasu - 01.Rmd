@@ -20,7 +20,7 @@ output:
 if (requireNamespace("thematic")) 
   thematic::thematic_rmd(font = "auto")
 
-pacman::p_load(rstatix, readxl, tidyverse, lme4, modelr, DT)
+pacman::p_load(rstatix, readxl, tidyverse, lme4, modelr, DT, boot, future, furrr)
 
 df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
 
@@ -97,6 +97,15 @@ Is there a theoretical justification to include criteria of benefits, like clini
 There is definitely a theoretical basis for including therapeutic area, as the processing of drugs from different areas might be guided by different goals which could be reflected in differences of their prioritization by specific medical and govermnetal insitutions.
 
 Whether the recommendation was positive or negative might also play a role. It should be easier to find reasons to dismiss a drug than to accept it, as rejection is often a result of not meeting just one of many criteria, while acceptance is more often associated with meeting all of them. 
+
+
+
+## Data analysis (for the article)
+
+
+- Logarithmic transformation was applied to improve the distribution of errors and to allow for a linear relationship
+- Outliers were removed to achieve full normality of the errors
+- Bootstrapping was used to provide robust standard errors given the 
 
 
 # General setup
@@ -554,7 +563,7 @@ df %>%
 **Dodać analizę symulacyjną z efektem interakcji**
 
 
-# Final model analysis
+# The final model analysis
 
 
 
@@ -562,6 +571,16 @@ df %>%
  
 ## Fit the model
 
+
+
+!!!
+
+
+Interestingly, a model with drug category and therapeutic area, but without country, as fixed effects, and both ID and Year as random effects, follows a homoscedastic distribution of errors.
+
+Może zaproponować taki model??
+
+!!!
 
 ```{r}
 
@@ -594,7 +613,7 @@ df_final <- df %>%
 
 # log_days ~ Kraj + Kraj:Rekomendacja + Obszar_terapeutyczny + (1|ID) + (1|Drug_category)
 
-form <- formula(log(dni_do_rekomendacji) ~ Kraj + Obszar_terapeutyczny + Year + (1|ID))
+form <- formula(log(dni_do_rekomendacji) ~ Kraj + Drug_category + Obszar_terapeutyczny + (1|ID))
 
 
 
@@ -630,7 +649,7 @@ homoscedasticity_plot(best_fit)
 df_filtered <- filter_residuals(df_final, best_fit)
 
 
-best_fit2 <- lmer(
+fit_filtered <- lmer(
   formula = form,
   data = df_filtered
   )
@@ -646,22 +665,22 @@ best_fit2 <- lmer(
 ```{r}
 
 
-hist_resid(best_fit2)
+hist_resid(fit_filtered)
 
 ```
 
 
 ```{r}
-homoscedasticity_plot(best_fit2)
+homoscedasticity_plot(fit_filtered)
 
 ```
 
 
 
 ```{r}
-# confint(best_fit2)
+# confint(fit_filtered)
 
-summary(best_fit2)
+summary(fit_filtered)
 
 ```
 
@@ -671,55 +690,168 @@ https://stats.oarc.ucla.edu/r/faq/how-can-i-estimate-the-standard-error-of-trans
 
 ## Country comparison post-hoc analysis
 
+### Bootstrap emmeans
+
 
 ```{r}
+library(parallel)
 
-library(emmeans)
+# Write bootstrap function
+fun_boot <- function(data, idx) {
+    
+    # Obtain a bootstrap sample
+    dat = data[idx, ]
+    
+    # Fit a model to the bootstrapped sample
+    fit = lmer(form, data = dat)
+    
+    # Obtain emmeans from the model
+    emm = emmeans(fit, pairwise ~ Kraj, data = dat)
+    
+    # Number of contrasts
+    contr_n <- as_tibble(emm$contrasts) %>% nrow()
+    
+    # Contrasts' names
+    contr_lab <- emm$contrasts %>% 
+      as_tibble() %>% 
+      pull(contrast) %>% 
+      as.character()
+    
+    rtn = rep(NA, contr_n) %>% set_names(contr_lab)
+    rtn[contr_lab] = predict(emm$contrasts)
+    rtn
+}
 
-# Obliczam różnice dla wszystkich par krajów
-emm <- emmeans(best_fit2, pairwise ~ Kraj, type = "response")
+
+# Parallel execution
+n_cores <- detectCores() - 1 # Leave one core free
+n_bootstraps <- 2000 # Number of bootstrap samples
+
+# Initialize cluster
+cl <- makeCluster(n_cores)
+
+# Export the dataset and the function to the cluster
+clusterExport(cl, varlist = c("df_filtered", "fun_boot"))
+
+# You might need to export the formula 'form' if it's not defined within df_filtered
+# Assuming 'form' is a formula object defined in your workspace
+clusterExport(cl, varlist = c("form"))
+
+# If your function depends on packages, load them on each cluster node
+clusterEvalQ(cl, library(lme4))
+clusterEvalQ(cl, library(emmeans))
+clusterEvalQ(cl, library(tidyverse))
+
+
+
+
+# Run bootstrap without parallel computing
+set.seed(123) 
+boot_result <- boot(
+  df_filtered, 
+  fun_boot, 
+  R = n_bootstraps, 
+  parallel = "snow", 
+  ncpus = n_cores, 
+  cl = cl
+  )
+
+
+# Stop the cluster
+stopCluster(cl)
+
+```
 
 
 
 
 
-# Wyodrębniam tabelę ze średnimi dla krajów
-country_means <- emm$emmeans %>% 
-  as_tibble()
+```{r}
+# Write iterated function for booted CI bca
+boot_bca <- function(index, boot.out) {
+  
+  # Obtain bca ci
+  bca <- boot.ci(boot.out, type = "bca", index = index)
+  
+  # Isolate only the values
+  result <- tibble(
+    comparison = names(bca$t0), 
+    emmean = bca$t0,
+    ci.lower = bca$bca[4], 
+    ci.upper = bca$bca[5])
+  
+  return(result)
+  
+}
 
 
-# Sprowadzam do macierzy ala interkorelacje
-posthoc1 <- emm$contrasts %>% 
-  as_tibble() %>% 
-  separate(contrast, into = c("Country1", "Country2"), sep = " / ") 
 
-posthoc2 <- posthoc1 %>% 
-  rename(
-    Country1 = Country2,
-    Country2 = Country1
+```
+
+
+```{r eval=FALSE}
+
+
+# Extract bca 95% confidence intervals using parallel computing
+plan(multisession) 
+
+all_bca <- seq_along(boot_result$t0) %>% 
+ future_map(
+    boot_bca,
+    boot.out = boot_result
     ) 
 
 
-posthoc1 %>% 
-  add_row(posthoc2) %>% 
+plan(sequential) 
+
+
+```
+
+
+
+```{r}
+
+# Create a post-hoc table with information about significant results
+posthoc1 <- all_bca %>% 
+  reduce(add_row) %>% 
+  separate(comparison, into = c("Country1", "Country2"), sep = " - ") %>% 
+  mutate(across(where(is.double), ~round(., 2))) %>% 
+  mutate(
+    significant = if_else(
+      (ci.lower > 0 & ci.upper > 0) | (ci.lower < 0 & ci.upper < 0),
+      "*",
+      ""
+    )
+  )
+
+# Isolate a mirror posthoc table
+posthoc2 <- posthoc1 %>% 
+  rename(
+    Country1 = Country2,
+    Country2 = Country1,
+    ci.lower = ci.upper,
+    ci.upper = ci.lower
+    ) %>% 
+  mutate(across(where(is.double), ~. * -1)) 
+
+# Combine both posthoc tables
+combined_posthoc <- posthoc1 %>% 
+  add_row(posthoc2) %>%
   mutate(
     across(c(Country1, Country2), ~factor(., levels = Kraj_lvls))
         ) %>% 
-  mutate(sig = case_when(
-    p.value > 0.05 ~ "",
-    p.value <= 0.05 & p.value > 0.01 ~ "*",
-    p.value <= 0.01 & p.value > 0.001 ~ "**",
-    p.value <= 0.001 ~ "***"
-  )) %>% 
-  mutate(
-    across(where(is.double), ~round(., 2))
-  ) %>% 
-  mutate(
-    est = str_c(ratio, " (", SE, ")", sig)
-  ) %>% 
+  mutate(est = str_c(emmean, " [", ci.lower, ", ", ci.upper, "]", significant)) %>% 
   select(Country1, Country2, est) %>% 
-  pivot_wider(names_from = Country2, values_from = est, names_sort = T) %>% 
-  html_table()
+  arrange(Country1) %>% 
+  pivot_wider(names_from = Country2, values_from = est, names_sort = T)
+```
+
+
+```{r}
+
+emm <-  emmeans(fit_filtered, pairwise ~ Kraj, data = df_filtered, type = "response")
+
+
 ```
 
 
@@ -728,11 +860,15 @@ Wykres dla estimated marginal means
 
 ```{r}
 
-country_means %>% 
-  as_tibble() %>% 
+# Isolated estimated marginal means
+emm_means <- emm$emmeans %>% 
+  as_tibble() 
+
+# Plot / line plot
+emm_means %>% 
   ggplot(aes(fct_reorder(Kraj, response), response, group = 1))  +
   geom_line() +
-  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL)) +
+#  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL)) +
   geom_point()
 
 ```
@@ -740,10 +876,15 @@ country_means %>%
 
 
 
-# Description and Interpretation
+```{r}
 
--   Extreme values were removed to allow for a normal distribution of the errors
--   Weights were applied based on country
--   logarithmic transformation
+emm_means %>% 
+  ggplot(aes(fct_reorder(Kraj, response), response))  +
+  geom_bar(stat = "identity")
+
+```
+
+
+
 
 
