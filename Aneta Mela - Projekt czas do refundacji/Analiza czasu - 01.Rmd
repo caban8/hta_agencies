@@ -2,16 +2,13 @@
 title: "Country comparison in terms of the time to recommendation"
 output: 
   html_document:
-    code_folding: show
-    theme:
-      bg: "#202123"
-      fg: "#B8BCC2"
-      primary: "#EA80FC"
-      secondary: "#00DAC6"
-      base_font:
-        google: Prompt
-      heading_font:
-        google: Proza Libre
+    code_folding: hide
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: journal
+params:
+  run_boot: false
 ---
 
 # Setup
@@ -20,7 +17,7 @@ output:
 if (requireNamespace("thematic")) 
   thematic::thematic_rmd(font = "auto")
 
-pacman::p_load(rstatix, readxl, tidyverse, lme4, modelr, DT, boot, future, furrr)
+pacman::p_load(rstatix, readxl, tidyverse, lme4, modelr, DT, boot, future, furrr, emmeans)
 
 df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
 
@@ -77,7 +74,7 @@ Why there is a smaller range of errors at the higher end of the predicter values
 
 ## Pytania do Anety
 
--   Jakiego było kryterium usunięcia wybranych obserwacji z liczbą dni do rekomendacji?
+-   Jakie było kryterium usunięcia wybranych obserwacji z liczbą dni do rekomendacji?
 -   W jaki sposób planujesz uzasadnić w artykule wybranie tych krótszych rekomendacji w ramach tych, gdzie dochodziło do powtórzeń?
 
 
@@ -102,14 +99,35 @@ Whether the recommendation was positive or negative might also play a role. It s
 
 ## Data analysis (for the article)
 
+All analyses were conducted in R (version 4.3.2)
+using Rstudio (2023.12.1, Build 402).
+Data was prepared and visualized using the tidyverse package.
 
-- Logarithmic transformation was applied to improve the distribution of errors and to allow for a linear relationship
+A mixed-effects model was applied to cater to the unbalanced data. Drug category, therapeutic area and country were used as fixed effects, while drug indication was used as the random effect with random intercepts. 
+Number of days until recommendation was transformed logarithmically to allow for a more normal distribution of the residuals.
+This was further improved by removing 19 outliers, using a standardized value of above |3| as the exclusion criterion. 
+The model was obtained using the lme4 package. The pairwise comparisons between pairs of countries were calculated using the emmeans package.
+As the model suffered from heteroscedasticity, the confidence intervals for mean differences were obtained using bootstrapping BCa with a 95% confidence level.
+
+
+
+
+- Logarithmic transformation using natural logarithm was applied to improve the distribution of errors and to allow for a linear relationship
 - Outliers were removed to achieve full normality of the errors
-- Bootstrapping was used to provide robust standard errors given the 
+- Bootstrapping was used to provide robust standard errors given the heteroscedasticity of the data 
 
 
 # General setup
 
+## Plots
+
+```{r}
+
+fill_color <- "#FAA43A"
+border_color <-  "#5DA5DA"
+fill_2colors <- c( "#5DA5DA","#FAA43A")
+
+```
 
 
 ## Tables
@@ -549,22 +567,59 @@ df %>%
 
 ```
 
+### Median number of days by country and year
+
+
+```{r}
+stats2 <- df %>% 
+  group_by(Kraj, Year) %>% 
+  get_summary_stats(dni_do_rekomendacji)
+```
+
+
+```{r}
+stats <- df %>% 
+  mutate(Year = factor(Year, labels = str_c(14:19, "'"))) %>% 
+  group_by(Kraj, Year) %>% 
+  summarise(
+    median = median(dni_do_rekomendacji),
+    q1 = quantile(dni_do_rekomendacji, probs = 0.25),
+    q3 = quantile(dni_do_rekomendacji, probs = 0.75)
+  ) 
 
 
 
-# Other solutions
 
--   bootstrap for the estimated marginal means
-    -   https://stackoverflow.com/questions/75852979/bootstrapping-emmeans-derived-from-a-multilevel-regression-but-error-in-t-star
-    -   https://stackoverflow.com/questions/39358438/r-obtain-coefficientsci-from-bootstrapping-mixed-effect-model-results
--   robust errors
+stats %>% 
+  ggplot(aes(Year, median)) +
+  geom_line(color = fill_color, size = 1, group = 1) +
+  geom_linerange(
+    aes(ymin = q1, ymax = q3),
+    size = 2,
+    color = border_color
+    ) +
+  facet_wrap(~Kraj, ncol = 6) +
+  geom_point(shape = 18, color = fill_color, fill = fill_color, size = 4) +
+  theme_minimal() +
+  ggExtra::removeGridX() +
+  theme(
+    #axis.text.x = element_text(angle = 90),
+    text = element_text(size = 15)
+    ) +
+  labs(x = "", y = "Days to Recommendation")
 
 
-**Dodać analizę symulacyjną z efektem interakcji**
+```
+
+
+
+
 
 
 # The final model analysis
 
+
+## Null models
 
 
  
@@ -654,10 +709,11 @@ fit_filtered <- lmer(
   data = df_filtered
   )
 
-
+# Number of excluded observations
+nobs(best_fit) - nobs(fit_filtered)
 
 ```
-
+There were 19 observations excluded.
 
 
 ### Assumptions after filtering
@@ -693,7 +749,7 @@ https://stats.oarc.ucla.edu/r/faq/how-can-i-estimate-the-standard-error-of-trans
 ### Bootstrap emmeans
 
 
-```{r}
+```{r eval=params$run_boot}
 library(parallel)
 
 # Write bootstrap function
@@ -745,7 +801,7 @@ clusterEvalQ(cl, library(tidyverse))
 
 
 
-# Run bootstrap without parallel computing
+# Run bootstrap with parallel computing
 set.seed(123) 
 boot_result <- boot(
   df_filtered, 
@@ -760,13 +816,23 @@ boot_result <- boot(
 # Stop the cluster
 stopCluster(cl)
 
+
+# Export for future knitting to save on time
+save(boot_result, file = "Boot results.RData")
+
 ```
 
 
 
 
 
-```{r}
+```{r }
+
+# Load exported bootstrapping results
+load("Boot results.RData")
+
+
+
 # Write iterated function for booted CI bca
 boot_bca <- function(index, boot.out) {
   
@@ -789,7 +855,7 @@ boot_bca <- function(index, boot.out) {
 ```
 
 
-```{r eval=FALSE}
+```{r eval=params$run_boot}
 
 
 # Extract bca 95% confidence intervals using parallel computing
@@ -805,11 +871,16 @@ all_bca <- seq_along(boot_result$t0) %>%
 plan(sequential) 
 
 
+# Export for future knitting to save on time
+save(all_bca, file = "bca confidence intervals.Rdata")
+
 ```
 
 
 
 ```{r}
+# Load exported confidence intervals bca
+load("bca confidence intervals.Rdata")
 
 # Create a post-hoc table with information about significant results
 posthoc1 <- all_bca %>% 
@@ -843,8 +914,31 @@ combined_posthoc <- posthoc1 %>%
   mutate(est = str_c(emmean, " [", ci.lower, ", ", ci.upper, "]", significant)) %>% 
   select(Country1, Country2, est) %>% 
   arrange(Country1) %>% 
-  pivot_wider(names_from = Country2, values_from = est, names_sort = T)
+  pivot_wider(names_from = Country2, values_from = est, names_sort = T) %>% 
+  rename(Country = Country1)
+
+# Obtain sample sizes
+countries_n <- boot_result$data %>% 
+  count(Kraj) %>% 
+  rename(Country = Kraj)
+
+# Remove redundant values above the diagonal
+combined_posthoc[, -1][upper.tri(combined_posthoc[, -1], T)] <- ""
+
+
+combined_posthoc %>% 
+  left_join(countries_n) %>% 
+  mutate(Country = str_c(1:nrow(.), ". ", Country, " (n = ", n, ")")) %>% 
+  select(-n) %>% 
+  set_names(c("Country", 1:(ncol(.) - 1))) %>% 
+  select(-ncol(.)) %>% 
+  html_table() 
 ```
+
+<br>
+
+Results with an asterisk ("*") are statistically significant.
+
 
 
 ```{r}
@@ -853,6 +947,14 @@ emm <-  emmeans(fit_filtered, pairwise ~ Kraj, data = df_filtered, type = "respo
 
 
 ```
+
+
+
+```{r}
+emm_obszar <- emmeans(fit_filtered, pairwise ~ Obszar_terapeutyczny, data = df_filtered, type = "response")
+
+```
+
 
 
 Wykres dla estimated marginal means
@@ -869,7 +971,10 @@ emm_means %>%
   ggplot(aes(fct_reorder(Kraj, response), response, group = 1))  +
   geom_line() +
 #  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL)) +
-  geom_point()
+  geom_point() +
+  theme(
+    axis.text.x = element_text(angle = 45)
+  )
 
 ```
 
@@ -880,11 +985,36 @@ emm_means %>%
 
 emm_means %>% 
   ggplot(aes(fct_reorder(Kraj, response), response))  +
-  geom_bar(stat = "identity")
+  geom_bar(stat = "identity", fill = fill_color) +
+  coord_flip()
 
 ```
 
 
 
+
+
+```{r eval=FALSE}
+
+df_filtered %>% 
+  count(Kraj)
+
+df_filtered %>% 
+  group_by(Kraj) %>% 
+  summarise(mean = mean(dni_do_rekomendacji)) %>% 
+  arrange(mean) %>% 
+  html_table()
+
+
+```
+
+
+
+# Things to do
+
+-   Add information about outlier observations that were removed for the final fit
+    -   Update specific stats / frequencies (show two tables?)
+-   Add bootstrapped means standard errors for each country with bca standard errors
+    
 
 
