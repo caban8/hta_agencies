@@ -9,6 +9,8 @@ output:
     theme: journal
 params:
   run_boot: false
+bibliography: references.bib
+csl: apa.csl
 ---
 
 # Setup
@@ -24,7 +26,8 @@ df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na 
 df <- df %>% 
   select(-c(...1, ...2))
 
-
+# Logical - evaluate bootstrapping chunks
+boot_eval <- params$run_boot
 
 
 
@@ -97,24 +100,13 @@ Whether the recommendation was positive or negative might also play a role. It s
 
 
 
-## Data analysis (for the article)
+### Final
 
-All analyses were conducted in R (version 4.3.2)
-using Rstudio (2023.12.1, Build 402).
-Data was prepared and visualized using the tidyverse package.
+All analyses were conducted using R version 4.3.2 [@RCoreTeam] through RStudio version 2023.12.1 Build 402 [@RStudio]. Data preparation and visualization were carried out using the tidyverse [@Tidyverse] package. Given the unbalanced nature of the dataset, a mixed-effects model was employed to appropriately handle the data structure, incorporating drug category, therapeutic area, and country as fixed effects, and drug indication as a random effect with random intercepts.
 
-A mixed-effects model was applied to cater to the unbalanced data. Drug category, therapeutic area and country were used as fixed effects, while drug indication was used as the random effect with random intercepts. 
-Number of days until recommendation was transformed logarithmically to allow for a more normal distribution of the residuals.
-This was further improved by removing 19 outliers, using a standardized value of above |3| as the exclusion criterion. 
-The model was obtained using the lme4 package. The pairwise comparisons between pairs of countries were calculated using the emmeans package.
-As the model suffered from heteroscedasticity, the confidence intervals for mean differences were obtained using bootstrapping BCa with a 95% confidence level.
+The response variable, number of days until recommendation, was log-transformed to mitigate right skewness and non-linearity. Outliers (n = 19) were removed based on their standardized values, specifically those exceeding |3| in the residuals, to meet the assumption of normality of the errors.
 
-
-
-
-- Logarithmic transformation using natural logarithm was applied to improve the distribution of errors and to allow for a linear relationship
-- Outliers were removed to achieve full normality of the errors
-- Bootstrapping was used to provide robust standard errors given the heteroscedasticity of the data 
+The model was fitted using the lme4 package [@lme4], and the pairwise comparisons between countries were obtained using the emmeans package [@emmeans]. The model exhibited heteroscedasticity, which was addressed by employing bootstrap BCa (bias-corrected and accelerated) with a 95% confidence level. This robust method was specifically applied to compute the confidence intervals for the pairwise comparisons between countries, as obtained using the emmeans package.
 
 
 # General setup
@@ -749,7 +741,7 @@ https://stats.oarc.ucla.edu/r/faq/how-can-i-estimate-the-standard-error-of-trans
 ### Bootstrap emmeans
 
 
-```{r eval=params$run_boot}
+```{r eval = boot_eval}
 library(parallel)
 
 # Write bootstrap function
@@ -855,7 +847,7 @@ boot_bca <- function(index, boot.out) {
 ```
 
 
-```{r eval=params$run_boot}
+```{r eval = boot_eval}
 
 
 # Extract bca 95% confidence intervals using parallel computing
@@ -875,6 +867,30 @@ plan(sequential)
 save(all_bca, file = "bca confidence intervals.Rdata")
 
 ```
+
+
+
+```{r}
+
+# Obtain emmeans for each country
+emm <-  emmeans(fit_filtered, pairwise ~ Kraj, data = df_filtered, type = "response")
+
+# Isolate estimated marginal means per country
+emm_means <- emm$emmeans %>% 
+  as_tibble() %>% 
+  arrange(desc(response)) 
+
+# Isolate levels order
+Kraj_byMean <- emm_means %>% 
+  pull(Kraj) %>% 
+  as.character()
+
+# Obtain emmeans for each therapeutic area
+emm_obszar <- emmeans(fit_filtered, pairwise ~ Obszar_terapeutyczny, data = df_filtered, type = "response")
+
+```
+
+
 
 
 
@@ -909,10 +925,15 @@ posthoc2 <- posthoc1 %>%
 combined_posthoc <- posthoc1 %>% 
   add_row(posthoc2) %>%
   mutate(
-    across(c(Country1, Country2), ~factor(., levels = Kraj_lvls))
+    across(c(Country1, Country2), ~factor(., levels = Kraj_byMean))
         ) %>% 
   mutate(est = str_c(emmean, " [", ci.lower, ", ", ci.upper, "]", significant)) %>% 
-  select(Country1, Country2, est) %>% 
+  select(Country1, Country2, est) 
+
+
+
+# Combine both posthoc tables
+combined_posthoc_table <- combined_posthoc %>% 
   arrange(Country1) %>% 
   pivot_wider(names_from = Country2, values_from = est, names_sort = T) %>% 
   rename(Country = Country1)
@@ -923,10 +944,10 @@ countries_n <- boot_result$data %>%
   rename(Country = Kraj)
 
 # Remove redundant values above the diagonal
-combined_posthoc[, -1][upper.tri(combined_posthoc[, -1], T)] <- ""
+combined_posthoc_table[, -1][upper.tri(combined_posthoc_table[, -1], T)] <- ""
 
 
-combined_posthoc %>% 
+combined_posthoc_table %>% 
   left_join(countries_n) %>% 
   mutate(Country = str_c(1:nrow(.), ". ", Country, " (n = ", n, ")")) %>% 
   select(-n) %>% 
@@ -940,20 +961,18 @@ combined_posthoc %>%
 Results with an asterisk ("*") are statistically significant.
 
 
+### Interpretacja
 
-```{r}
+Czas od rejestracji do wydania rekomendacji w Polsce okazał się statystycznie dłuższy niż we wszystkich innych analizowanych krajach. 
+Kolejnymi dwoma krajami pod względem długości postępowania rekomenadcyjnego były Irlandia i Nowa Zelandia, przy czym pomiędzy nimi nie zaobserwowano istotnej różnicy, a dla tego drugiego nie wykazano również różnicy względem Kanady i Anglii.
 
-emm <-  emmeans(fit_filtered, pairwise ~ Kraj, data = df_filtered, type = "response")
+Kanada i Anglia charakteryzowały się podobnym czasem od rejestracji do wydania rekomendacji, który, nie licząc Holandii, był istotnie statystycznie dłuższy względem wszystkich z pozostałych, niewymienionych jeszcze krajów, tj., kolejno, Niemiec, Szkocji, Francji, Australii, Norwegii i Walii.
 
+Na kolejnej pozycji pod względem czasu postępowania rekomenadcyjnego uplasowała się Holandia, wypadając gorzej od Francji, Australii, Norwegii i Walii. 
+Nie wykazywała natomiast róznicy w czasie rekomendowania wskazań względem Niemiec i Szkocji, dla których zaobserwowano istotnie dłuższy czas wydawania rekomendacji tylko względem Walii. 
 
-```
+Najkrótszą liczbę dni postępowania rekomendacyjnego zaobserwowano dla, kolejno, Francji, Australii, Norwegii i Walii, które pod tym względem nie różniły się istotnie statystycznie między sobą.
 
-
-
-```{r}
-emm_obszar <- emmeans(fit_filtered, pairwise ~ Obszar_terapeutyczny, data = df_filtered, type = "response")
-
-```
 
 
 
@@ -962,9 +981,6 @@ Wykres dla estimated marginal means
 
 ```{r}
 
-# Isolated estimated marginal means
-emm_means <- emm$emmeans %>% 
-  as_tibble() 
 
 # Plot / line plot
 emm_means %>% 
