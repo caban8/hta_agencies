@@ -367,6 +367,59 @@ df %>%
 
 ```
 
+
+
+### Summary statistics by Country
+
+
+```{r}
+stats_country <- df %>% 
+   group_by(Kraj) %>% 
+   get_summary_stats(dni_do_rekomendacji) %>% 
+   mutate(mean = round(mean, 1)) %>% 
+   select(-c(variable,  mad,  se, ci)) %>% 
+   Cabix2::round_df(q1, q3, iqr, mean, sd, digits = 1) %>% 
+  select(Kraj, n, min, max, mean, sd, q1, median, q3, iqr) %>% 
+  set_names(c("Country", "N", "Min", "Max","M",  "SD", "Q1", "Me", "Q3", "IQR"))
+
+stats_country %>% 
+  html_table()
+  
+```
+
+
+```{r include=FALSE}
+
+library(flextable)
+library(officer)
+
+
+stats_country %>%  
+  flextable()  %>% 
+  Cabflex2::flex_general() %>% 
+  italic(part = "header") %>% 
+  footnote(
+    value = as_paragraph(
+      as_i("Min"), " - Minimum value; ",
+      as_i("Max"), " - Maximum value; ",
+      as_i("M"), " - Mean; ",
+      as_i("SD"), " - Standard Deviation; ",
+      as_i("Q1"), " - The Lower Quartile; ",
+      as_i("Me"), " - Median; ",
+      as_i("Q3"), " - The Higher Quartile; ",
+      as_i("IQR"), " - Interquartile Range"
+    ), ref_symbols = ""
+  ) %>% 
+  font(fontname = "Times New Roman", part = "footer") %>% 
+   save_as_docx(path = str_c("Tabele/Dni do rekomendacji a kraj.docx"))
+
+
+```
+
+
+
+
+
 ## Distribution of the number of days
 
 
