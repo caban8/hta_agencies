@@ -334,6 +334,20 @@ df <- df %>%
 ```
 
 
+## Change Virusology category to infectious diseases
+
+```{r}
+
+df <- df %>% 
+  mutate(Obszar_terapeutyczny = plyr::mapvalues(
+    Obszar_terapeutyczny, 
+    "Virology",
+    "Infectious diseases"
+    )) 
+  
+
+```
+
 
 
 # EDA
@@ -688,6 +702,10 @@ Może zaproponować taki model??
 df_final <- df %>% 
   filter(n >= 1) %>% 
   filter(dni_do_rekomendacji != 0)
+
+
+
+
 ```
 
 
@@ -1038,12 +1056,16 @@ Wykres dla estimated marginal means
 # Plot / line plot
 emm_means %>% 
   ggplot(aes(fct_reorder(Kraj, response), response, group = 1))  +
-  geom_line() +
-#  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL)) +
-  geom_point() +
+  geom_line(color = fill_color) +
+ # geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL)) +
+  geom_point(color = fill_color) +
+  theme_minimal() +
   theme(
-    axis.text.x = element_text(angle = 45)
-  )
+    axis.text.x = element_text(angle = 45, size = 10),
+    axis.text.y = element_text(size = 10)
+  ) +
+  ggExtra::removeGridX() +
+  labs(x = "", y = "Number of Days to Recommendation")
 
 ```
 
@@ -1079,11 +1101,5 @@ df_filtered %>%
 
 
 
-# Things to do
-
--   Add information about outlier observations that were removed for the final fit
-    -   Update specific stats / frequencies (show two tables?)
--   Add bootstrapped means standard errors for each country with bca standard errors
-    
 
 
