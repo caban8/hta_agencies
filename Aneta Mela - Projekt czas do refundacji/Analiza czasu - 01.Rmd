@@ -336,14 +336,16 @@ df <- df %>%
 
 ## Change Virusology category to infectious diseases
 
+Jednak nie zmieniamy. Zostawiamy wirusologię.
+
 ```{r}
 
-df <- df %>% 
-  mutate(Obszar_terapeutyczny = plyr::mapvalues(
-    Obszar_terapeutyczny, 
-    "Virology",
-    "Infectious diseases"
-    )) 
+# df <- df %>% 
+#   mutate(Obszar_terapeutyczny = plyr::mapvalues(
+#     Obszar_terapeutyczny, 
+#     "Virology",
+#     "Infectious diseases"
+#     )) 
   
 
 ```
@@ -391,6 +393,7 @@ stats_country <- df %>%
    group_by(Kraj) %>% 
    get_summary_stats(dni_do_rekomendacji) %>% 
    mutate(mean = round(mean, 1)) %>% 
+  arrange(desc(median)) %>% 
    select(-c(variable,  mad,  se, ci)) %>% 
    Cabix2::round_df(q1, q3, iqr, mean, sd, digits = 1) %>% 
   select(Kraj, n, min, max, mean, sd, q1, median, q3, iqr) %>% 
@@ -400,6 +403,10 @@ stats_country %>%
   html_table()
   
 ```
+
+
+
+
 
 
 ```{r include=FALSE}
@@ -426,6 +433,109 @@ stats_country %>%
   ) %>% 
   font(fontname = "Times New Roman", part = "footer") %>% 
    save_as_docx(path = str_c("Tabele/Dni do rekomendacji a kraj.docx"))
+
+
+```
+
+
+
+### Summary stats by Country and Therapeutic aera
+
+
+```{r}
+
+stats_country_area <- df %>% 
+   group_by(Kraj, Obszar_terapeutyczny) %>% 
+   get_summary_stats(dni_do_rekomendacji) %>% 
+   mutate(mean = round(mean, 1)) %>% 
+  ungroup() %>% 
+  arrange(Kraj, desc(median )) %>% 
+   select(-c(variable,  mad,  se, ci)) %>% 
+   Cabix2::round_df(q1, q3, iqr, mean, sd, digits = 1) %>% 
+    select(Kraj, Obszar_terapeutyczny, n, min, max, mean, sd, q1, median, q3, iqr) %>% 
+    set_names(c("Country", "Therapeutic Area", "N", "Min", "Max","M",  "SD", "Q1", "Me", "Q3", "IQR"))
+
+stats_country_area %>% 
+  html_table()
+  
+```
+
+
+
+```{r}
+
+stats_country_area %>%  
+  flextable()  %>% 
+  Cabflex2::flex_general() %>% 
+  italic(part = "header") %>% 
+  footnote(
+    value = as_paragraph(
+      as_i("Min"), " - Minimum value; ",
+      as_i("Max"), " - Maximum value; ",
+      as_i("M"), " - Mean; ",
+      as_i("SD"), " - Standard Deviation; ",
+      as_i("Q1"), " - The Lower Quartile; ",
+      as_i("Me"), " - Median; ",
+      as_i("Q3"), " - The Higher Quartile; ",
+      as_i("IQR"), " - Interquartile Range"
+    ), ref_symbols = ""
+  ) %>% 
+  font(fontname = "Times New Roman", part = "footer") %>% 
+   save_as_docx(path = str_c("Tabele/Dni do rekomendacji a kraj i obszar.docx"))
+
+
+
+```
+
+
+### Summary stats by Therapeutic area and Country 
+
+
+
+
+
+
+```{r}
+
+stats_area_country <- df %>% 
+   group_by(Obszar_terapeutyczny, Kraj, ) %>% 
+   get_summary_stats(dni_do_rekomendacji) %>% 
+   mutate(mean = round(mean, 1)) %>% 
+  ungroup() %>% 
+  arrange(Obszar_terapeutyczny, desc(median )) %>% 
+   select(-c(variable,  mad,  se, ci)) %>% 
+   Cabix2::round_df(q1, q3, iqr, mean, sd, digits = 1) %>% 
+    select(Obszar_terapeutyczny, Kraj, n, min, max, mean, sd, q1, median, q3, iqr) %>% 
+    set_names(c("Therapeutic Area", "Country", "N", "Min", "Max","M",  "SD", "Q1", "Me", "Q3", "IQR"))
+
+stats_area_country %>% 
+  html_table()
+  
+```
+
+
+
+```{r}
+
+stats_area_country %>%  
+  flextable()  %>% 
+  Cabflex2::flex_general() %>% 
+  italic(part = "header") %>% 
+  footnote(
+    value = as_paragraph(
+      as_i("Min"), " - Minimum value; ",
+      as_i("Max"), " - Maximum value; ",
+      as_i("M"), " - Mean; ",
+      as_i("SD"), " - Standard Deviation; ",
+      as_i("Q1"), " - The Lower Quartile; ",
+      as_i("Me"), " - Median; ",
+      as_i("Q3"), " - The Higher Quartile; ",
+      as_i("IQR"), " - Interquartile Range"
+    ), ref_symbols = ""
+  ) %>% 
+  font(fontname = "Times New Roman", part = "footer") %>% 
+   save_as_docx(path = str_c("Tabele/Dni do rekomendacji a obszar i kraj.docx"))
+
 
 
 ```
