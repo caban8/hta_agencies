@@ -351,6 +351,18 @@ Jednak nie zmieniamy. Zostawiamy wirusologię.
 ```
 
 
+## Excel eksport
+
+
+```{r}
+
+df %>% 
+  xlsx::write.xlsx(str_c("Time analysis data - 1933 observations (", Sys.Date(), ").xlsx"))
+
+
+```
+
+
 
 # EDA
 
@@ -382,6 +394,25 @@ df %>%
   filter(dni_do_rekomendacji == 0)
 
 ```
+
+
+### Median time by country and year
+
+
+
+```{r}
+
+df %>% 
+  group_by(Kraj, Year) %>% 
+  summarise(
+    median = median(dni_do_rekomendacji)
+  ) %>% 
+  pivot_wider(names_from = "Year", values_from = "median") %>% 
+  html_table()
+
+```
+
+
 
 
 
@@ -433,6 +464,65 @@ stats_country %>%
   ) %>% 
   font(fontname = "Times New Roman", part = "footer") %>% 
    save_as_docx(path = str_c("Tabele/Dni do rekomendacji a kraj.docx"))
+
+
+```
+
+
+### Summary statistics by Area
+
+
+```{r}
+stats_area <- df %>% 
+   group_by(Obszar_terapeutyczny) %>% 
+   get_summary_stats(dni_do_rekomendacji) %>% 
+   mutate(mean = round(mean, 1)) %>% 
+  arrange(desc(median)) %>% 
+   select(-c(variable,  mad,  se, ci)) %>% 
+   Cabix2::round_df(q1, q3, iqr, mean, sd, digits = 1) %>% 
+  select(Obszar_terapeutyczny, n, min, max, mean, sd, q1, median, q3, iqr) %>% 
+  set_names(c("Therapeutic Area", "N", "Min", "Max","M",  "SD", "Q1", "Me", "Q3", "IQR"))
+
+stats_area %>% 
+  html_table()
+  
+```
+
+
+
+
+```{r}
+stats_area %>% 
+  mutate(
+    `areas year days` = if_else(Me > 365, "More than one year", "Less than one year")
+  ) %>% 
+  freq_table(`areas year days`) %>% 
+  html_table()
+```
+
+
+
+
+```{r include=FALSE}
+
+stats_area %>%  
+  flextable()  %>% 
+  Cabflex2::flex_general() %>% 
+  italic(part = "header") %>% 
+  footnote(
+    value = as_paragraph(
+      as_i("Min"), " - Minimum value; ",
+      as_i("Max"), " - Maximum value; ",
+      as_i("M"), " - Mean; ",
+      as_i("SD"), " - Standard Deviation; ",
+      as_i("Q1"), " - The Lower Quartile; ",
+      as_i("Me"), " - Median; ",
+      as_i("Q3"), " - The Higher Quartile; ",
+      as_i("IQR"), " - Interquartile Range"
+    ), ref_symbols = ""
+  ) %>% 
+  font(fontname = "Times New Roman", part = "footer") %>% 
+   save_as_docx(path = str_c("Tabele/Dni do rekomendacji a obszar.docx"))
 
 
 ```
@@ -773,9 +863,15 @@ stats %>%
   ggExtra::removeGridX() +
   theme(
     #axis.text.x = element_text(angle = 90),
-    text = element_text(size = 15)
+    text = element_text(size = 10),
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8),
+    strip.text = element_text(size = 10),
     ) +
   labs(x = "", y = "Days to Recommendation")
+
+
+
 
 
 ```
@@ -1175,7 +1271,7 @@ emm_means %>%
     axis.text.y = element_text(size = 10)
   ) +
   ggExtra::removeGridX() +
-  labs(x = "", y = "Number of Days to Recommendation")
+  labs(x = "", y = "Days to Recommendation")
 
 ```
 
