@@ -21,10 +21,28 @@ if (requireNamespace("thematic"))
 
 pacman::p_load(rstatix, readxl, tidyverse, lme4, modelr, DT, boot, future, furrr, emmeans)
 
-df <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
+# Import the main dataset
+df_main <- read_excel("d:/SPSS and statistics/Work/Zlecenia/Aneta Mela/Baza filtr na dates 2024-03-04.xlsx") 
 
-df <- df %>% 
+df_main <- df_main %>% 
   select(-c(...1, ...2))
+
+# Import additional observations updated at a later date
+df_more <- read_excel("Dane - aktualizacja obserwacji 23.05.2024 .xlsx") %>% 
+  select(-...1)
+
+# Delete incorrectly parsed columns
+df_more <- df_more %>% 
+  select(-c(Data_rejestracji, Data_rekomendacji))
+
+setdiff(
+  names(df_main),
+  names(df_more)
+)
+
+# Combine
+df <- df_main %>% 
+  add_row(df_more)
 
 # Logical - evaluate bootstrapping chunks
 boot_eval <- params$run_boot
