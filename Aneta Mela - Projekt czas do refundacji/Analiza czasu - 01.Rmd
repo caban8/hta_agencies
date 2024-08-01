@@ -206,15 +206,55 @@ df <- df %>%
 
 
 ```{r}
+duplicated_id <- df %>% 
+  count(ID, Agencja_kraj) %>% 
+  filter(n != 1) %>% 
+  arrange(desc(n)) 
+
+duplicated_id 
+
+duplicated_id %>% 
+  mutate(n = n - 1) %>% 
+  group_by(Agencja_kraj) %>% 
+  summarise(n = sum(n)) %>% 
+  arrange(Agencja_kraj)
+
+
+
+# Na przykładzie pojedynczego wskazania
+df %>% 
+  filter(ID == 1983)
 
 df %>% 
-  count(ID, Agencja_kraj) %>% 
-  filter(n != 1)
+  filter(ID == 1983) %>% 
+  pull(Wskazanie_rejestracyjne) %>% 
+  unique() 
+```
 
 
+```{r}
+df %>% 
+  filter(ID == 1983) %>% 
+  select(dni_do_rekomendacji, Kraj, Rekomendacja) %>% 
+  arrange(Kraj, dni_do_rekomendacji)
 
 ```
 
+
+```{r}
+
+# Number of observations before
+n_uncleaned <- nrow(df)
+
+duplicated_id %>% 
+  pull(n) %>% 
+  sum() %>%
+  {. - nrow(duplicated_id)}
+  
+
+```
+
+## Remove "duplicated" recommendation per given indication
 
 Dla agencji, które miały więcej niż jedną rekomendację w danym wskazaniu, wybieram tę krótszą / wcześniejszą
 
@@ -225,7 +265,10 @@ df <- df %>%
   group_by(ID, Agencja_kraj) %>% 
   arrange(dni_do_rekomendacji) %>% 
   slice(1) %>% 
-  ungroup()
+  ungroup() 
+
+df %>% 
+  drop_na(dni_do_rekomendacji, Drug_category, Therapeutic_lumped, Rekomendacja)
 
 ```
 
@@ -234,7 +277,6 @@ df <- df %>%
 
 
 ```{r}
-
 # Identify apparent distinctions
 not_unique <- df %>% 
   select(ID, Wskazanie_rejestracyjne, Nazwa_substancji_czynnej, Nazwa_miedzynarodowa) %>% 
@@ -248,7 +290,10 @@ df %>%
   unique() %>% 
   filter(ID %in% not_unique) %>% 
   html_table()
+```
 
+
+```{r}
 # Separate the dataset with indication info
 indication_info <- df %>% 
   select(ID, Wskazanie_rejestracyjne, Nazwa_substancji_czynnej, Nazwa_miedzynarodowa) %>% 
@@ -855,15 +900,26 @@ stats2 <- df %>%
 
 
 ```{r}
+# Obtain medians, Q1, Q3, per country and year
 stats <- df %>% 
   mutate(Year = factor(Year, labels = str_c(14:19, "'"))) %>% 
   group_by(Kraj, Year) %>% 
   summarise(
     median = median(dni_do_rekomendacji),
     q1 = quantile(dni_do_rekomendacji, probs = 0.25),
-    q3 = quantile(dni_do_rekomendacji, probs = 0.75)
+    q3 = quantile(dni_do_rekomendacji, probs = 0.75),
+    n = n()
   ) 
 
+
+# Extract a separate df with sample size for labelling
+stats_n <- stats %>% 
+  select(Kraj, Year, n) %>% 
+  mutate(median = 1100)
+
+stats_n <- stats %>% 
+  select(Kraj, Year, n, q3) %>% 
+  mutate(median = q3 + 110)
 
 
 
@@ -875,8 +931,20 @@ stats %>%
     size = 2,
     color = border_color
     ) +
-  facet_wrap(~Kraj, ncol = 6) +
-  geom_point(shape = 18, color = fill_color, fill = fill_color, size = 4) +
+  facet_wrap(~Kraj, ncol = 4) +
+  geom_point(
+    shape = 18, 
+    color = fill_color, 
+    fill = fill_color, 
+    size = 3.5,
+    alpha = 2/3
+    ) +
+  geom_text(
+    aes(label = n),
+    data = stats_n,
+    size = 3,
+    color = "#60BD68"
+    ) +
   theme_minimal() +
   ggExtra::removeGridX() +
   theme(
@@ -886,7 +954,8 @@ stats %>%
     axis.text.y = element_text(size = 8),
     strip.text = element_text(size = 10),
     ) +
-  labs(x = "", y = "Days to Recommendation")
+  labs(x = "", y = "Days to Recommendation") +
+  scale_y_continuous(breaks = seq(0, 1000, 250))
 
 
 
@@ -1137,9 +1206,35 @@ boot_bca <- function(index, boot.out) {
   
 }
 
+# Write iterated function for booted CI bca (back-transform version)
+#boot_bca <- function(index, boot.out) {
+#  
+#  # Obtain bca ci
+#  bca <- boot.ci(boot.out, type = "bca", index = index)
+#  
+#  # Isolate only the values
+#  result <- tibble(
+#    comparison = names(bca$t0), 
+#    emmean = exp(bca$t0),
+#    ci.lower = exp(bca$bca[4]),
+#    ci.upper = exp(bca$bca[5])
+#    )
+#  
+#  return(result)
+#  
+#}
+
 
 
 ```
+
+
+#### Problem z back-transform logarytmizacją
+
+Problem polega na tym, że różnica obliczona po logarytmizacji, wrzucona następnie do funkcji wykładniczej, nie pokazuje prawdziwej różnicy, tylko stosunek (ratio) na skali prawdziwej
+
+Yes, if the dependent variable of the model was log-transformed, the differences in estimated marginal means (EMMs) or contrasts from the emmeans package will indeed represent differences in the log-transformed scale. When you back-transform these differences from the log scale, they will represent ratios on the original scale.
+
 
 
 ```{r eval = boot_eval}
@@ -1163,12 +1258,19 @@ save(all_bca, file = "bca confidence intervals.Rdata")
 
 ```
 
+### Emmeans without boostrap
 
 
 ```{r}
+emmeans(fit_filtered, pairwise ~ Kraj, data = df_filtered, type = "response")
+```
 
+
+```{r}
 # Obtain emmeans for each country
 emm <-  emmeans(fit_filtered, pairwise ~ Kraj, data = df_filtered, type = "response")
+
+
 
 # Isolate estimated marginal means per country
 emm_means <- emm$emmeans %>% 
