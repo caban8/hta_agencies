@@ -248,6 +248,28 @@ server <- function(input, output, session) {
     vars[vars != "NA"]
   })
   
+  
+  # Update country2 choices when country1 is selected
+  observe({
+    selected_country1 <- input$country1
+    current_country2 <- isolate(input$country2)  # Preserve the current selection
+    
+    # Update country2 options, remove the option that is equal to country1
+    updated_countries <- countries[countries != selected_country1]
+    
+    # If the current country2 is still valid, keep it selected, otherwise, set to NULL
+    new_country2 <- ifelse(current_country2 %in% updated_countries, current_country2, NULL)
+    
+    updateSelectInput(session, "country2",
+                      choices = updated_countries,
+                      selected = new_country2)
+  })
+  
+  
+ 
+ 
+  
+  
   ## Wyodrębniam wektor do nazewnictwa
   #vars2 <- reactive({
   #  vars2 <-  str_replace(vars(), "Kat1_", "") %>% 
@@ -485,7 +507,7 @@ server <- function(input, output, session) {
         as.data.frame() %>% 
         setNames(c("Agreement", "Disagreement")) %>% 
         mutate(Statistic = kappa_labs) %>% 
-        select(Statistic, Disagreement, Agreement) 
+        select(Statistic, Disagreement, Concordance) 
         
         
     } else {print(" ")}
