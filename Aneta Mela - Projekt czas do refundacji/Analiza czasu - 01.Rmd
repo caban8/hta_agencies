@@ -312,7 +312,7 @@ specific_info <- df %>%
 # Isolate the dataset for the analyses
 df <- df %>% 
   select(
-    ID, Year, 
+    ID, Year, Nazwa_substancji_czynnej,
     Kraj, Therapeutic_lumped, Rekomendacja, Drug_category, Obszar_terapeutyczny,
     dni_do_rekomendacji, log_days) 
 
@@ -325,6 +325,7 @@ Inspect the character variables' values
 ```{r}
 df %>%
   select(!where(is.double)) %>% 
+  select(-Nazwa_substancji_czynnej) %>% 
   map(table)
 ```
 
@@ -437,6 +438,48 @@ df %>%
 df %>% 
   count(Kraj) %>% 
   arrange(desc(n))
+
+```
+
+
+
+##  Number of drugs and indications authorized between 2014 and 2019 and covered in the analysis
+
+
+```{r}
+
+# Obtain columns with frequencies of the number of active substances, indications, and recommendations
+drugs_freqs <- df %>% 
+  select(Year, ID, Nazwa_substancji_czynnej) %>% 
+  mutate(Year = as.character(Year)) %>% 
+  nest(
+    `Active substances` = Nazwa_substancji_czynnej, 
+    Indications = ID
+    ) %>% 
+  mutate(
+    Recommendations = map_dbl(Indications, nrow),
+    across(-c(Year, Recommendations), ~map(., unique)),
+    across(-c(Year, Recommendations), ~map_dbl(., nrow))
+    ) %>% 
+  bind_rows(
+    summarise(
+      .,
+      across(where(is.numeric), sum),
+      across(where(is.character), ~"Total"))
+    ) 
+
+
+# Export drug freqs to a word table
+drugs_freqs %>% 
+  flextable() %>% 
+  autofit() %>% 
+  save_as_docx(path = "Tabele/Number of drugs and indications authorized between 2014 and 2019 and covered in the analysis.docx")
+
+drugs_freqs %>% 
+  html_table()
+  
+
+
 
 ```
 
@@ -1384,14 +1427,15 @@ emm_means %>%
   ggplot(aes(fct_reorder(Kraj, response), response, group = 1))  +
   geom_line(color = fill_color) +
  # geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL)) +
-  geom_point(color = fill_color) +
+  geom_point(color = fill_color, size = 2.5) +
   theme_minimal() +
   theme(
     axis.text.x = element_text(angle = 45, size = 10),
     axis.text.y = element_text(size = 10)
   ) +
   ggExtra::removeGridX() +
-  labs(x = "", y = "Days to Recommendation")
+  coord_cartesian(ylim = c(0, 800)) +
+  labs(x = "", y = "Mean Number of Days to Recommendation") 
 
 ```
 
